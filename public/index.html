@@ -141,6 +141,7 @@
 </header>
 
 <main class="wrap">
+  <div id="noServerBanner"></div>
   <!-- TEAMS -->
   <section id="sec-teams" class="on">
     <div class="sec-h"><h2>Sub-Teams</h2><div class="hint" id="teamsHint"></div></div>
@@ -586,7 +587,7 @@ async function poll(){
 }
 async function coachAction(method,path,body,onOk){
   try{const r=await apiSend(method,path,body,true);setOnline(true);onOk&&onOk(r);cacheSave();}
-  catch(e){ if(e&&e.coach){toast('Coach PIN needed');openCoachPin();} else {setOnline(false);toast('Action failed — offline?');} }
+  catch(e){ if(e&&e.coach){toast('Coach PIN needed');openCoachPin();} else {setOnline(false);toast('No server reached — run via Coolify or localhost:3000 to save.');} }
 }
 
 /* ============ ACTIONS ============ */
@@ -646,7 +647,7 @@ async function submitPin(){
   try{ const r=await apiSend('POST','/api/coach/verify',{pin},false);
     if(r.ok){coachPin=pin;localStorage.setItem(PINKEY,pin);ui.mode="coach";saveUI();closeModal('pinModal');$('pinInput').value='';applyChrome();renderAll();toast('Coach mode unlocked');}
     else toast('Wrong PIN');
-  }catch(e){setOnline(false);toast('Can’t reach server');}
+  }catch(e){setOnline(false);toast('No server — open the Coolify URL or localhost:3000, not the .html file.');}
 }
 function closeModal(id){$(id).classList.remove('on');}
 
@@ -678,6 +679,9 @@ async function boot(){
   seedPlayers();
   try{ await pull(); }catch(e){ setOnline(false); if(!cacheLoad()){seedPlayers();} }
   applyChrome(); renderAll(); go('teams');
+  if(location.protocol==='file:'&&$('noServerBanner')){
+    $('noServerBanner').innerHTML='<div class="vbanner bad" style="margin:10px 0">⚠︎ You opened this as a <b>file</b>, so there is no backend — coach login and saving won’t work here. Open your <b>Coolify URL</b>, or run <code>npm start</code> in the <code>voxstars-app</code> folder and open <b>http://localhost:3000</b>.</div>';
+  }
   setInterval(poll,15000);
   window.addEventListener('online',manualRefresh);
 }
