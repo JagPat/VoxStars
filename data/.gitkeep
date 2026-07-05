@@ -1,0 +1,1 @@
+# keeps the local data/ folder in git; actual state.json is gitignored and lives on the Coolify volume

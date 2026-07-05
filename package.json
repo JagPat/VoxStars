@@ -1,0 +1,15 @@
+{
+  "name": "voxstars-cockpit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VOX STARS bowling team cockpit — best-XI optimizer + shared practice tracker (IncrediBowl S2)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/api.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

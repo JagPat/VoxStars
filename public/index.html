@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#16324f">
+<title>VOX STARS — Team Cockpit</title>
+<style>
+  :root{
+    --navy:#16324f; --navy2:#0f2438; --navy3:#1d4368;
+    --gold:#f5b301; --gold2:#ffcf3f;
+    --ink:#eaf1f8; --muted:#8fa9c2; --line:rgba(255,255,255,.10);
+    --good:#2ec16b; --bad:#ff5a5a; --card:#193a5b;
+    --shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:linear-gradient(180deg,var(--navy) 0%,var(--navy2) 100%);color:var(--ink);min-height:100vh;padding-bottom:78px;}
+  h1,h2,h3{margin:0}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px}
+  header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,var(--navy2),rgba(15,36,56,.92));backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .hbar{display:flex;align-items:center;gap:10px;padding:12px 14px;max-width:520px;margin:0 auto}
+  .logo{width:40px;height:40px;border-radius:10px;flex:0 0 auto;background:radial-gradient(circle at 30% 30%,var(--gold2),var(--gold));display:grid;place-items:center;font-size:22px;box-shadow:var(--shadow)}
+  .htitle{line-height:1.05;min-width:0}
+  .htitle b{font-size:18px;letter-spacing:1.5px;font-style:italic;color:#fff}
+  .htitle small{display:flex;align-items:center;gap:6px;color:var(--gold2);font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;margin-top:2px}
+  .syncdot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;flex:0 0 auto}
+  .syncdot.on{background:var(--good);box-shadow:0 0 6px rgba(46,193,107,.8)}
+  .syncdot.off{background:var(--bad)}
+  .hright{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .iconbtn{background:var(--navy3);border:1px solid var(--line);color:var(--ink);border-radius:9px;width:34px;height:32px;font-size:15px;cursor:pointer}
+  .modepill{font-size:11px;font-weight:700;letter-spacing:.5px;padding:7px 10px;border-radius:20px;border:1px solid var(--line);color:var(--ink);background:var(--navy3);cursor:pointer;white-space:nowrap}
+  .modepill b{color:var(--gold2)}
+  nav{position:fixed;bottom:0;left:0;right:0;z-index:30;background:var(--navy2);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
+  nav .inner{display:flex;width:100%;max-width:520px}
+  nav button{flex:1;background:none;border:0;color:var(--muted);padding:9px 2px 8px;font-size:10.5px;font-weight:600;letter-spacing:.3px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer}
+  nav button .i{font-size:19px;line-height:1}
+  nav button.active{color:var(--gold2)}
+  section{display:none;padding-top:14px;animation:fade .25s ease}
+  section.on{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .sec-h{display:flex;align-items:center;gap:8px;margin:2px 0 12px}
+  .sec-h h2{font-size:15px;letter-spacing:.6px;text-transform:uppercase;color:#fff}
+  .sec-h .hint{color:var(--muted);font-size:12px;margin-left:auto;text-align:right}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow)}
+  .card.tight{padding:11px 13px}
+  .row{display:flex;align-items:center;gap:10px}.grow{flex:1;min-width:0}
+  .muted{color:var(--muted)}.gold{color:var(--gold2)}.mono{font-variant-numeric:tabular-nums}
+  .proj{display:flex;gap:10px;margin-bottom:12px}
+  .proj .box{flex:1;background:linear-gradient(160deg,var(--navy3),var(--navy2));border:1px solid var(--line);border-radius:14px;padding:12px;text-align:center}
+  .proj .box .k{font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+  .proj .box .v{font-size:24px;font-weight:800;color:var(--gold2);margin-top:3px}
+  .proj .box .v.small{font-size:15px;color:#fff;font-weight:700}
+  .plr{display:flex;align-items:center;gap:11px;padding:10px 4px;border-bottom:1px solid var(--line)}
+  .plr:last-child{border-bottom:0}
+  .rankno{width:22px;text-align:center;font-weight:800;color:var(--gold2);font-size:14px;flex:0 0 auto}
+  .avatar{width:38px;height:38px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-weight:800;font-size:14px;color:var(--navy2);background:linear-gradient(160deg,#dfe9f4,#b9cde2)}
+  .avatar.f{background:linear-gradient(160deg,#ffd9ec,#ffb3d9)}
+  .pname{font-weight:700;font-size:14px;line-height:1.15;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .pmeta{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .avgbox{margin-left:auto;text-align:right;flex:0 0 auto}
+  .avgbox .a{font-size:19px;font-weight:800;color:#fff}
+  .avgbox .s{font-size:10px;color:var(--muted);letter-spacing:.3px}
+  .tag{font-size:9.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;padding:2px 6px;border-radius:6px;border:1px solid var(--line)}
+  .tag.f{color:#ffb3d9;border-color:rgba(255,179,217,.4)}
+  .tag.lock{color:var(--gold2);border-color:rgba(245,179,1,.5)}
+  .tag.new{color:#7fd3ff;border-color:rgba(127,211,255,.4)}
+  .tag.est{color:#c7a6ff;border-color:rgba(199,166,255,.4)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;border-radius:11px;padding:12px 14px;font-size:14px;font-weight:700;letter-spacing:.3px;cursor:pointer;width:100%}
+  .btn.gold{background:linear-gradient(160deg,var(--gold2),var(--gold));color:var(--navy2)}
+  .btn.ghost{background:var(--navy3);color:var(--ink);border:1px solid var(--line)}
+  .btn.sm{width:auto;padding:9px 12px;font-size:12.5px;border-radius:9px}
+  .btn.tiny{width:auto;padding:6px 9px;font-size:11.5px;border-radius:8px}
+  .btnrow{display:flex;gap:9px}
+  .setgrid{display:flex;gap:9px;flex-wrap:wrap}
+  .stepper{display:flex;align-items:center;background:var(--navy2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .stepper button{background:none;border:0;color:var(--gold2);font-size:18px;font-weight:800;width:34px;height:36px;cursor:pointer}
+  .stepper .val{min-width:30px;text-align:center;font-weight:800;font-size:15px}
+  label.fld{display:block;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  .fieldset{flex:1;min-width:120px}
+  input,select,textarea{width:100%;background:var(--navy2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:11px 12px;font-size:15px;font-family:inherit;-webkit-appearance:none}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--gold)}
+  select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='%238fa9c2'%3E%3Cpath d='M0 0h12L6 8z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+  .rlist .plr{cursor:pointer}
+  .expand{display:none;padding:10px 4px 4px;border-top:1px dashed var(--line);margin-top:2px}
+  .expand.on{display:block}
+  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 10px}
+  .statgrid .s{background:var(--navy2);border:1px solid var(--line);border-radius:10px;padding:8px 4px;text-align:center}
+  .statgrid .s .k{font-size:9.5px;letter-spacing:.3px;text-transform:uppercase;color:var(--muted)}
+  .statgrid .s .v{font-size:16px;font-weight:800;margin-top:2px}
+  .toggles{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .chip{font-size:12px;font-weight:600;padding:8px 11px;border-radius:9px;border:1px solid var(--line);background:var(--navy2);color:var(--muted);cursor:pointer;user-select:none}
+  .chip.on{background:var(--gold);color:var(--navy2);border-color:var(--gold)}
+  .qlog{background:linear-gradient(160deg,var(--navy3),var(--navy2))}
+  .gamerow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);font-size:13px}
+  .gamerow:last-child{border-bottom:0}
+  .score-badge{width:44px;height:38px;border-radius:9px;display:grid;place-items:center;font-weight:800;font-size:16px;color:var(--navy2);background:linear-gradient(160deg,var(--gold2),var(--gold));flex:0 0 auto}
+  .unv{color:var(--bad);font-size:10px;font-weight:700}
+  .cmpbar{height:16px;border-radius:8px;background:var(--navy2);overflow:hidden;display:flex;margin:8px 0}
+  .cmpbar .us{background:linear-gradient(90deg,var(--gold),var(--gold2))}.cmpbar .them{background:#3d5f82}
+  .cmp-team{display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:2px 0}
+  .verdict{text-align:center;font-size:15px;font-weight:800;padding:10px;border-radius:11px;margin-top:6px}
+  .verdict.win{background:rgba(46,193,107,.14);color:var(--good);border:1px solid rgba(46,193,107,.4)}
+  .verdict.lose{background:rgba(255,90,90,.12);color:var(--bad);border:1px solid rgba(255,90,90,.4)}
+  .note{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .sp8{height:8px}.sp14{height:14px}
+  .toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--gold);color:var(--navy2);font-weight:700;font-size:13px;padding:10px 16px;border-radius:22px;box-shadow:var(--shadow);z-index:60;opacity:0;pointer-events:none;transition:.25s;max-width:90%;text-align:center}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+  .modal{position:fixed;inset:0;background:rgba(6,16,26,.75);z-index:70;display:none;align-items:flex-end;justify-content:center}
+  .modal.on{display:flex}
+  .sheet{background:var(--navy);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:520px;padding:16px 16px calc(20px + env(safe-area-inset-bottom));animation:up .25s ease}
+  @keyframes up{from{transform:translateY(30px);opacity:.6}to{transform:none;opacity:1}}
+  .sheet h3{font-size:15px;margin-bottom:12px;letter-spacing:.4px}
+  .grabber{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="hbar">
+    <div class="logo">🎳</div>
+    <div class="htitle">
+      <b>VOX STARS</b>
+      <small><span class="syncdot" id="syncDot"></span><span id="hsub">IncrediBowl S2</span></small>
+    </div>
+    <div class="hright">
+      <button class="iconbtn" title="Refresh from server" onclick="manualRefresh()">↻</button>
+      <div class="modepill" id="modePill" onclick="toggleMode()">Mode: <b id="modeTxt">Player</b></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- LINEUP -->
+  <section id="sec-lineup" class="on">
+    <div class="sec-h"><h2>Best Lineup</h2><div class="hint" id="lineupHint"></div></div>
+    <div class="card tight">
+      <div class="setgrid" style="align-items:flex-end">
+        <div><label class="fld">Bowlers / match</label><div class="stepper"><button onclick="bump('lineupSize',-1)">−</button><div class="val" id="v-size">5</div><button onclick="bump('lineupSize',1)">+</button></div></div>
+        <div><label class="fld">Min. women</label><div class="stepper"><button onclick="bump('minFemales',-1)">−</button><div class="val" id="v-minf">1</div><button onclick="bump('minFemales',1)">+</button></div></div>
+        <div class="fieldset" style="flex:1"><label class="fld">Rank by</label>
+          <select id="rankBy" onchange="changeRankBy(this.value)"><option value="avg">Projected average</option><option value="high">Peak (high game)</option></select></div>
+      </div>
+    </div>
+    <div class="proj">
+      <div class="box"><div class="k">Proj. team total</div><div class="v mono" id="projTotal">—</div></div>
+      <div class="box"><div class="k">Lineup avg</div><div class="v small mono" id="projAvg">—</div></div>
+      <div class="box"><div class="k">Women</div><div class="v small mono" id="projF">—</div></div>
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:6px">
+        <h3 style="font-size:13px;letter-spacing:.5px" class="gold">RECOMMENDED XI (top <span id="lblSize">5</span>)</h3>
+        <button class="btn tiny ghost" style="margin-left:auto" onclick="go('roster')">Edit players</button>
+      </div>
+      <div id="lineupList"></div>
+    </div>
+    <div class="card tight"><div class="row"><h3 style="font-size:12.5px;letter-spacing:.5px" class="muted">ON THE BENCH</h3></div><div id="benchList"></div></div>
+    <p class="note">Averages blend prior IncrediBowl data with practice games the team logs. New bowlers show <span class="tag new" style="display:inline">NEW</span> until they bowl practice games — then they auto-rank.</p>
+  </section>
+
+  <!-- ROSTER -->
+  <section id="sec-roster">
+    <div class="sec-h"><h2>Roster</h2><div class="hint"><span id="rosterCount"></span> players</div></div>
+    <div class="card tight rlist" id="rosterList"></div>
+    <p class="note" id="rosterNote"></p>
+  </section>
+
+  <!-- PRACTICE -->
+  <section id="sec-practice">
+    <div class="sec-h"><h2>Practice Log</h2><div class="hint" id="practiceHint"></div></div>
+    <div class="card qlog">
+      <h3 style="font-size:13px;margin-bottom:10px" class="gold">＋ Log a game</h3>
+      <div style="margin-bottom:9px"><label class="fld" id="whoLabel">Bowler</label><select id="logWho" onchange="onWhoChange()"></select></div>
+      <div class="setgrid" style="margin-bottom:9px">
+        <div class="fieldset"><label class="fld">Score (0–300)</label><input id="logScore" type="number" inputmode="numeric" min="0" max="300" placeholder="e.g. 138"></div>
+        <div style="width:78px"><label class="fld">Strikes</label><input id="logStrikes" type="number" inputmode="numeric" min="0" max="12" placeholder="0"></div>
+        <div style="width:78px"><label class="fld">Spares</label><input id="logSpares" type="number" inputmode="numeric" min="0" max="10" placeholder="0"></div>
+      </div>
+      <div style="margin-bottom:11px"><label class="fld">Session date</label><input id="logDate" type="date"></div>
+      <button class="btn gold" onclick="logGame()">🎳 Save game</button>
+    </div>
+    <div class="card tight">
+      <div class="row" style="margin-bottom:4px"><h3 style="font-size:12.5px;letter-spacing:.5px" class="muted">RECENT GAMES</h3><span class="hint muted" id="gamesCount" style="margin-left:auto;font-size:11px"></span></div>
+      <div id="gamesList"></div>
+    </div>
+  </section>
+
+  <!-- COMPARE -->
+  <section id="sec-compare">
+    <div class="sec-h"><h2>Beat the Rivals</h2><div class="hint" id="cmpHint"></div></div>
+    <div class="card">
+      <div class="row" style="margin-bottom:6px"><h3 style="font-size:13px;letter-spacing:.5px" class="gold">LEAGUE LADDER — best <span id="ladN">5</span></h3></div>
+      <div id="ladderList"></div>
+      <p class="note" style="margin-top:8px">All 12 teams ranked by their best <span class="ladN2">5</span> bowlers' prior-season averages. Your total uses your live optimised XI. Tap a rival to load it below. Rivals are scratch totals — if the league forces a woman in the lineup, most rivals drop (their women are largely un-rated), so your real edge is likely bigger.</p>
+    </div>
+    <div class="card">
+      <p class="note" style="margin-bottom:12px">Or enter any rival total manually:</p>
+      <div class="setgrid">
+        <div class="fieldset"><label class="fld">Rival team</label><input id="cmpName" placeholder="e.g. Bharat Blazers" value="Rival XI"></div>
+        <div style="width:120px"><label class="fld">Their total</label><input id="cmpScore" type="number" inputmode="numeric" placeholder="e.g. 620"></div>
+      </div>
+      <div class="sp14"></div>
+      <button class="btn gold" onclick="renderCompare()">Compare</button>
+    </div>
+    <div class="card" id="cmpResult" style="display:none"></div>
+    <p class="note">Rival averages scraped from the IncrediBowl S2 auction results. New/un-rated rival bowlers aren't counted, so these are each rival's known ceiling. <span id="cmpN" style="display:none">5</span></p>
+  </section>
+
+  <!-- DATA -->
+  <section id="sec-data">
+    <div class="sec-h"><h2>Data &amp; Sync</h2></div>
+    <div class="card tight">
+      <div class="row"><span class="syncdot" id="syncDot2"></span><span id="syncStatus" style="font-size:13px;font-weight:700">—</span>
+      <button class="btn tiny ghost" style="margin-left:auto" onclick="manualRefresh()">↻ Refresh</button></div>
+      <p class="note" style="margin-top:8px" id="syncSub"></p>
+    </div>
+    <div class="card">
+      <h3 style="font-size:13px;margin-bottom:10px" class="gold">Backup</h3>
+      <p class="note" style="margin-bottom:12px">Data lives on the team server and syncs to everyone automatically. You can still export a snapshot for safekeeping.</p>
+      <div class="btnrow" style="margin-bottom:9px">
+        <button class="btn ghost sm" onclick="exportData()">⬆︎ Export snapshot</button>
+        <button class="btn ghost sm" onclick="openImport()">⬇︎ Restore (coach)</button>
+      </div>
+      <button class="btn ghost sm" style="width:100%" onclick="copyText()">📋 Copy team log as text</button>
+    </div>
+    <div class="card" id="coachCard" style="display:none">
+      <h3 style="font-size:13px;margin-bottom:10px" class="gold">Coach settings</h3>
+      <label class="fld">Default average for un-rated new bowlers</label>
+      <input id="defAvg" type="number" inputmode="numeric" value="100" onchange="changeDefAvg(this.value)">
+      <div class="sp14"></div>
+      <button class="btn ghost sm" style="width:100%;color:var(--bad)" onclick="resetAll()">↺ Reset to original roster</button>
+    </div>
+    <p class="note">Roster preloaded from the IncrediBowl S2 auction (VOX STARS, 15 players). Prior-season averages from that page; new signings start without data.</p>
+  </section>
+</main>
+
+<nav><div class="inner">
+  <button data-tab="lineup" class="active" onclick="go('lineup')"><span class="i">🏆</span>Lineup</button>
+  <button data-tab="roster" onclick="go('roster')"><span class="i">👥</span>Roster</button>
+  <button data-tab="practice" onclick="go('practice')"><span class="i">🎳</span>Practice</button>
+  <button data-tab="compare" onclick="go('compare')"><span class="i">⚔️</span>Rivals</button>
+  <button data-tab="data" onclick="go('data')"><span class="i">⚙︎</span>Data</button>
+</div></nav>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal" id="pinModal" onclick="if(event.target===this)closeModal('pinModal')">
+  <div class="sheet"><div class="grabber"></div>
+    <h3>Enter coach PIN</h3>
+    <p class="note" style="margin-bottom:10px">Coach mode lets you set the lineup, verify games, and edit the roster for the whole team.</p>
+    <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN" onkeydown="if(event.key==='Enter')submitPin()">
+    <div class="sp8"></div><button class="btn gold" onclick="submitPin()">Unlock coach mode</button>
+  </div>
+</div>
+
+<div class="modal" id="importModal" onclick="if(event.target===this)closeModal('importModal')">
+  <div class="sheet"><div class="grabber"></div>
+    <h3>Restore from snapshot (coach)</h3>
+    <p class="note" style="margin-bottom:10px">Paste an exported snapshot. Its games merge into the team record (duplicates skipped).</p>
+    <textarea id="importText" style="height:110px;font-size:12px;font-family:monospace" placeholder="Paste snapshot code…"></textarea>
+    <div class="sp8"></div><button class="btn gold" onclick="doImport()">Merge into team</button>
+  </div>
+</div>
+
+<script>
+/* ============ STATIC ROSTER (names + prior IncrediBowl stats) ============ */
+const ROSTER = [
+  {no:149,name:"AR. Jagrut Patel",firm:"Vitan Architects",g:"M",hand:"R",pt:2,age:60,lgAvg:89,lgHigh:93,lgM:2,lgStr:null},
+  {no:171,name:"Mr. Sandeep Sisodiya",firm:"Vox India",g:"M",hand:"R",pt:1,age:43,lgAvg:null,lgHigh:null,lgM:0,lgStr:null},
+  {no:175,name:"Mr. Siddharth Bhatt",firm:"Vox India",g:"M",hand:"R",pt:1,age:49,lgAvg:null,lgHigh:null,lgM:0,lgStr:null},
+  {no:99,name:"ID. Nayan Mistry",firm:"Hridgata Atelier",g:"M",hand:"R",pt:4,age:39,lgAvg:null,lgHigh:null,lgM:0,lgStr:null},
+  {no:31,name:"ID. Shivangi Paradava",firm:"PDC Architects",g:"F",hand:"R",pt:7,age:43,lgAvg:115,lgHigh:158,lgM:3,lgStr:3},
+  {no:22,name:"ID. Pranati Shah",firm:"PV Design Studio",g:"F",hand:"R",pt:10,age:27,lgAvg:121,lgHigh:152,lgM:4,lgStr:6},
+  {no:114,name:"ER. Pratik Vasant",firm:"P.INE Studio",g:"M",hand:"L",pt:6,age:36,lgAvg:null,lgHigh:null,lgM:0,lgStr:null},
+  {no:38,name:"AR. Akhil Gajjar",firm:"Verizon Architects",g:"M",hand:"R",pt:10,age:41,lgAvg:140,lgHigh:150,lgM:3,lgStr:10},
+  {no:137,name:"Suraj Gajera",firm:"SV Design Interior",g:"M",hand:"R",pt:3,age:31,lgAvg:null,lgHigh:null,lgM:0,lgStr:null},
+  {no:8,name:"AR. Kaivana Jagrut",firm:"Vitan Architects",g:"F",hand:"R",pt:2,age:26,lgAvg:null,lgHigh:null,lgM:0,lgStr:null},
+  {no:128,name:"AR. Saumil Patel",firm:"Squelette Design",g:"M",hand:"R",pt:4,age:31,lgAvg:165,lgHigh:177,lgM:2,lgStr:7},
+  {no:41,name:"AR. Ankur Sanghvi",firm:"Tranquil The Design Wave",g:"M",hand:"R",pt:4,age:42,lgAvg:133,lgHigh:145,lgM:3,lgStr:3},
+  {no:49,name:"AR. Bhavik Nandi",firm:"Associated Architects",g:"M",hand:"R",pt:2,age:56,lgAvg:126,lgHigh:151,lgM:3,lgStr:5},
+  {no:43,name:"AR. Arpan Patel",firm:"Briqmort",g:"M",hand:"R",pt:2,age:null,lgAvg:125,lgHigh:142,lgM:4,lgStr:6},
+  {no:82,name:"AR. Karnav Patel",firm:"Satatya Architects",g:"M",hand:"R",pt:2,age:36,lgAvg:null,lgHigh:null,lgM:0,lgStr:null}
+];
+/* Rival squads — each rival's prior-season averages (rated bowlers only), sorted high→low.
+   Scraped from the IncrediBowl S2 auction results. Used to rank the league ladder. */
+const RIVAL_AVGS={
+  "ICA Invincibles":[150,147,145,127,125,124,112,106,104],
+  "Verantes Elites":[145,144,139,126,115,100,94,64,59],
+  "Bharat Blazers":[172,132,120,120,116,93,84],
+  "Durlax Warriors":[150,134,127,120,118,105,102,95],
+  "TWF Tornados":[139,129,124,124,123,120,115,102,92,75],
+  "Koil Krushers":[138,131,124,120,118,115,115,104,75],
+  "Eff.co Wreckers":[130,128,127,122,120,106,90],
+  "Fima Strikers":[140,138,133,126,90,86],
+  "CXO Superboss":[132,131,126,125,111,85,73],
+  "All About Living":[142,127,122,113,112,110],
+  "Dynamic Hunters":[126,126,117,115,113,110,90]
+};
+const CACHE="voxstars_cache_v2", UIKEY="voxstars_ui_v2", PINKEY="voxstars_pin_v2";
+const DEFSET={lineupSize:5,minFemales:1,rankBy:"avg",defaultAvg:100};
+
+let players=[], settings={...DEFSET};
+let ui={mode:"player",me:null};
+let coachPin=localStorage.getItem(PINKEY)||"";
+let online=false, lastSync=0, curTab="lineup";
+
+/* ============ MODEL HELPERS ============ */
+function seedPlayers(){ players=ROSTER.map(r=>({...r,games:[],available:true,lockIn:false,lockOut:false,estAvg:null})); }
+function mergeServer(d){
+  const byNo=new Map((d.players||[]).map(p=>[p.no,p]));
+  players=ROSTER.map(r=>{ const s=byNo.get(r.no)||{}; return {...r,games:s.games||[],available:s.available!==false,lockIn:!!s.lockIn,lockOut:!!s.lockOut,estAvg:(s.estAvg??null)}; });
+  if(d.settings) settings={...DEFSET,...d.settings};
+  lastSync=d.updatedAt||Date.now();
+}
+function cacheSave(){ try{localStorage.setItem(CACHE,JSON.stringify({players,settings,lastSync}));}catch(e){} }
+function cacheLoad(){ try{const d=JSON.parse(localStorage.getItem(CACHE));if(d&&d.players){players=d.players;settings={...DEFSET,...d.settings};lastSync=d.lastSync||0;return true;}}catch(e){} return false; }
+function saveUI(){ try{localStorage.setItem(UIKEY,JSON.stringify(ui));}catch(e){} }
+function loadUI(){ try{const d=JSON.parse(localStorage.getItem(UIKEY));if(d)ui={...ui,...d};}catch(e){} }
+
+/* ============ AVERAGES + OPTIMIZER (identical, unit-tested logic) ============ */
+function practice(p){const g=p.games||[];const n=g.length;const sum=g.reduce((s,x)=>s+(+x.score||0),0);const high=g.reduce((m,x)=>Math.max(m,+x.score||0),0);return {n,sum,high};}
+function eff(p){
+  const pr=practice(p);const lgM=p.lgM||0,lgAvg=p.lgAvg;let avg=null,n=0,src="none",high=0;
+  if(lgAvg!=null&&lgM>0&&pr.n>0){avg=(lgAvg*lgM+pr.sum)/(lgM+pr.n);n=lgM+pr.n;src="both";high=Math.max(p.lgHigh||0,pr.high);}
+  else if(lgAvg!=null&&lgM>0){avg=lgAvg;n=lgM;src="league";high=p.lgHigh||0;}
+  else if(pr.n>0){avg=pr.sum/pr.n;n=pr.n;src="practice";high=pr.high;}
+  else if(p.estAvg!=null){avg=+p.estAvg;n=0;src="est";high=+p.estAvg;}
+  return {avg:avg==null?null:Math.round(avg),n,src,high};
+}
+function rankVal(p){const e=eff(p);if(e.avg==null)return -1;return settings.rankBy==="high"?e.high:e.avg;}
+function bestLineup(){
+  const size=settings.lineupSize,minF=settings.minFemales;
+  const pool=players.filter(p=>p.available&&!p.lockOut&&eff(p).avg!=null);
+  const sorted=[...pool].sort((a,b)=>rankVal(b)-rankVal(a));
+  const locked=sorted.filter(p=>p.lockIn);let line=[...locked];
+  for(const p of sorted){if(line.length>=size)break;if(!line.includes(p))line.push(p);}
+  if(line.length>size)line=line.slice(0,size);
+  const femInLine=()=>line.filter(p=>p.g==="F").length;let guard=0;
+  while(femInLine()<minF&&guard++<20){
+    const femOut=sorted.filter(p=>p.g==="F"&&!line.includes(p));if(!femOut.length)break;
+    const maleIn=line.filter(p=>p.g!=="F"&&!p.lockIn).sort((a,b)=>rankVal(a)-rankVal(b));if(!maleIn.length)break;
+    line=line.filter(p=>p!==maleIn[0]);line.push(femOut[0]);
+  }
+  line.sort((a,b)=>rankVal(b)-rankVal(a));
+  return {line,bench:sorted.filter(p=>!line.includes(p)),size,minF};
+}
+
+/* ============ RENDER (reads local players/settings) ============ */
+const $=id=>document.getElementById(id);
+const val=id=>($(id)||{}).value;
+function initials(n){const parts=n.replace(/^(AR\.|ID\.|ER\.|Mr\.|Mrs\.|Ms\.)\s*/i,"").trim().split(/\s+/);return((parts[0]||"")[0]||"")+((parts[1]||"")[0]||"");}
+function srcTag(e){if(e.src==="league")return '<span class="tag">LEAGUE</span>';if(e.src==="both")return '<span class="tag">LEAGUE+PRACTICE</span>';if(e.src==="practice")return '<span class="tag new">PRACTICE</span>';if(e.src==="est")return '<span class="tag est">ESTIMATE</span>';return '<span class="tag new">NEW</span>';}
+function playerRowHTML(p,rank){
+  const e=eff(p);const fem=p.g==="F";const av=e.avg==null?"—":e.avg;
+  const tags=[fem?'<span class="tag f">W</span>':'',p.lockIn?'<span class="tag lock">LOCK</span>':''].join('');
+  return `<div class="plr">${rank?`<div class="rankno">${rank}</div>`:''}<div class="avatar ${fem?'f':''}">${initials(p.name)}</div>
+    <div class="grow"><div class="pname">${p.name} ${tags}</div><div class="pmeta">#${p.no} · ${p.firm} · ${p.hand==='L'?'Left':'Right'} ${srcTag(e)}</div></div>
+    <div class="avgbox"><div class="a mono">${av}</div><div class="s">${e.n?e.n+' gm avg':'proj'}</div></div></div>`;
+}
+function renderLineup(){
+  $('v-size').textContent=settings.lineupSize;$('v-minf').textContent=settings.minFemales;
+  $('lblSize').textContent=settings.lineupSize;$('cmpN').textContent=settings.lineupSize;$('rankBy').value=settings.rankBy;
+  const {line,minF}=bestLineup();
+  const total=line.reduce((s,p)=>s+(eff(p).avg||0),0);const avg=line.length?Math.round(total/line.length):0;const fc=line.filter(p=>p.g==="F").length;
+  $('projTotal').textContent=line.length?total:"—";$('projAvg').textContent=line.length?avg:"—";$('projF').textContent=fc+(fc<minF?" ⚠︎":"");
+  $('lineupList').innerHTML=line.length?line.map((p,i)=>playerRowHTML(p,i+1)).join(''):'<p class="note">No rankable players yet. Log practice games or set estimates in the Roster tab.</p>';
+  const {bench}=bestLineup();
+  $('benchList').innerHTML=bench.length?bench.map(p=>playerRowHTML(p,null)).join(''):'<p class="note">Everyone is in the XI.</p>';
+  let hint=`${settings.lineupSize} bowlers`;if(fc<minF)hint+=` · ⚠︎ need ${minF} woman`;$('lineupHint').textContent=hint;
+}
+function renderRoster(){
+  $('rosterCount').textContent=players.length;const coach=ui.mode==="coach";
+  $('rosterNote').textContent=coach?"Tap a player to set availability, lock into the XI, add an estimate, or log/verify their games.":"Tap a player to view stats. Switch to Coach mode to edit availability and the lineup.";
+  $('rosterList').innerHTML=players.map(p=>{
+    const e=eff(p);const fem=p.g==="F";const av=e.avg==null?"—":e.avg;const pr=practice(p);
+    const statusTags=[fem?'<span class="tag f">W</span>':'',p.lockIn?'<span class="tag lock">LOCK</span>':'',(!p.available||p.lockOut)?'<span class="tag" style="color:var(--bad);border-color:rgba(255,90,90,.4)">OUT</span>':''].join('');
+    return `<div><div class="plr" onclick="toggleExpand(${p.no})"><div class="avatar ${fem?'f':''}">${initials(p.name)}</div>
+      <div class="grow"><div class="pname">${p.name} ${statusTags}</div><div class="pmeta">#${p.no} · ${p.firm} ${srcTag(e)}</div></div>
+      <div class="avgbox"><div class="a mono">${av}</div><div class="s">${e.n?e.n+' gm':'proj'}</div></div></div>
+      <div class="expand" id="exp-${p.no}">
+        <div class="statgrid"><div class="s"><div class="k">Avg</div><div class="v mono">${av}</div></div><div class="s"><div class="k">High</div><div class="v mono">${e.high||'—'}</div></div><div class="s"><div class="k">Practice</div><div class="v mono">${pr.n}</div></div><div class="s"><div class="k">Point</div><div class="v mono">${p.pt}</div></div></div>
+        ${coach?`<div class="toggles"><div class="chip ${p.available&&!p.lockOut?'on':''}" onclick="event.stopPropagation();setFlag(${p.no},'available')">${p.available&&!p.lockOut?'✓ Available':'Unavailable'}</div>
+          <div class="chip ${p.lockIn?'on':''}" onclick="event.stopPropagation();setFlag(${p.no},'lockIn')">${p.lockIn?'🔒 Locked in XI':'Lock into XI'}</div></div>
+          ${(e.src==="est"||e.src==="none")?`<div style="margin-bottom:8px"><label class="fld">Estimated average</label><div class="row" style="gap:8px"><input type="number" inputmode="numeric" id="est-${p.no}" value="${p.estAvg??''}" placeholder="e.g. 105" style="flex:1"><button class="btn tiny gold" onclick="event.stopPropagation();setEst(${p.no})">Set</button></div></div>`:''}
+          <button class="btn tiny ghost" onclick="event.stopPropagation();go('practice');prefillWho(${p.no})">🎳 Log a game for ${p.name.split(' ').slice(-1)[0]}</button>`
+        :`<p class="note">Coach mode required to edit this player.</p>`}
+      </div></div>`;
+  }).join('');
+}
+function renderPractice(){
+  const coach=ui.mode==="coach";const sel=$('logWho');
+  const opts=players; sel.innerHTML=opts.map(p=>`<option value="${p.no}">${p.name}${p.g==="F"?' (W)':''}</option>`).join('');
+  $('whoLabel').textContent = coach ? "Bowler" : "You are";
+  if(!coach){ if(ui.me==null)ui.me=players[0].no; sel.value=ui.me; }
+  if(!$('logDate').value)$('logDate').value=new Date().toISOString().slice(0,10);
+  const all=[];players.forEach(p=>(p.games||[]).forEach(gm=>all.push({...gm,pno:p.no,pname:p.name})));
+  all.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.ts||0)-(a.ts||0));
+  $('gamesCount').textContent=all.length?all.length+' logged':'';
+  $('gamesList').innerHTML=all.length?all.slice(0,50).map(g=>`
+    <div class="gamerow"><div class="score-badge">${g.score}</div>
+      <div class="grow"><div style="font-weight:700;font-size:13px">${g.pname}</div>
+        <div class="pmeta">${g.date||''} · ${g.strikes||0}✕ strikes · ${g.spares||0}/ spares ${g.verified?'':' · <span class="unv">unverified</span>'}</div></div>
+      ${coach?`<button class="btn tiny ghost" onclick="toggleVerify(${g.pno},'${g.ts}')">${g.verified?'✓':'verify'}</button><button class="btn tiny ghost" style="color:var(--bad)" onclick="delGame(${g.pno},'${g.ts}')">✕</button>`:''}
+    </div>`).join(''):'<p class="note">No practice games yet. Log your first game above.</p>';
+  $('practiceHint').textContent=all.length?all.length+' games':'';
+}
+function renderCompare(){
+  const {line}=bestLineup();const us=line.reduce((s,p)=>s+(eff(p).avg||0),0);
+  const them=+val('cmpScore')||0;const nm=val('cmpName')||"Rival XI";
+  if(!them){$('cmpResult').style.display='none';return;}
+  const max=Math.max(us,them,1);const win=us>=them;const diff=Math.abs(us-them);
+  $('cmpResult').style.display='block';
+  $('cmpResult').innerHTML=`<div class="cmp-team"><span>🎳 VOX STARS</span><span class="mono gold">${us}</span></div>
+    <div class="cmpbar"><div class="us" style="width:${us/max*100}%"></div></div>
+    <div class="cmp-team"><span>${nm}</span><span class="mono">${them}</span></div>
+    <div class="cmpbar"><div class="them" style="width:${them/max*100}%"></div></div>
+    <div class="verdict ${win?'win':'lose'}">${win?`▲ VOX STARS ahead by ${diff}`:`▼ Behind by ${diff} — need +${Math.ceil(diff/settings.lineupSize)} avg/bowler`}</div>`;
+}
+function ourProjected(){ const {line}=bestLineup(); return line.reduce((s,p)=>s+(eff(p).avg||0),0); }
+function rivalTotal(arr,n){ return arr.slice(0,n).reduce((a,b)=>a+b,0); }
+function renderLadder(){
+  const n=settings.lineupSize;
+  $('ladN').textContent=n; document.querySelectorAll('.ladN2').forEach(e=>e.textContent=n);
+  const rows=Object.keys(RIVAL_AVGS).map(name=>({name,total:rivalTotal(RIVAL_AVGS[name],n),rated:RIVAL_AVGS[name].length,us:false}));
+  rows.push({name:'VOX STARS',total:ourProjected(),rated:null,us:true});
+  rows.sort((a,b)=>b.total-a.total);
+  const ourRank=rows.findIndex(r=>r.us)+1;
+  $('cmpHint').textContent='You: #'+ourRank+' of '+rows.length;
+  $('ladderList').innerHTML=rows.map((r,i)=>`
+    <div class="plr" ${r.us?'':`onclick="loadRival('${r.name.replace(/'/g,"\\'")}',${r.total})" style="cursor:pointer"`}>
+      <div class="rankno">${i+1}</div>
+      <div class="avatar" style="${r.us?'background:linear-gradient(160deg,var(--gold2),var(--gold))':''}">${r.us?'🎳':initials(r.name)}</div>
+      <div class="grow"><div class="pname">${r.name} ${r.us?'<span class="tag lock">YOU</span>':''}</div>
+        <div class="pmeta">${r.us?'your optimised XI':('best '+n+' of '+r.rated+' rated')}</div></div>
+      <div class="avgbox"><div class="a mono">${r.total}</div></div>
+    </div>`).join('');
+}
+function loadRival(name,total){ $('cmpName').value=name; $('cmpScore').value=total; renderCompare(); const el=$('cmpResult'); el&&el.scrollIntoView&&el.scrollIntoView({behavior:'smooth',block:'center'}); }
+function renderData(){
+  const dot=$('syncDot2'),st=$('syncStatus'),sub=$('syncSub');
+  dot.className='syncdot '+(online?'on':'off');
+  st.textContent=online?'Connected to team server':'Offline — showing last synced data';
+  sub.textContent=lastSync?('Last synced '+new Date(lastSync).toLocaleString()):'Not synced yet';
+  $('coachCard').style.display=ui.mode==="coach"?'block':'none';
+  $('defAvg').value=settings.defaultAvg;
+}
+function renderCurrent(){ if(curTab==='lineup')renderLineup();else if(curTab==='roster')renderRoster();else if(curTab==='practice')renderPractice();else if(curTab==='data')renderData();else if(curTab==='compare'){renderLadder();renderCompare();} }
+function renderAll(){renderLineup();renderRoster();renderPractice();renderData();applyChrome();}
+
+/* ============ SYNC / API ============ */
+function setOnline(v){online=v;$('syncDot').className='syncdot '+(v?'on':'off');}
+async function apiGet(path){const r=await fetch(path);if(!r.ok)throw r;return r.json();}
+async function apiSend(method,path,body,coach){
+  const h={'Content-Type':'application/json'};if(coach)h['x-coach-pin']=coachPin;
+  const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  if(r.status===401){const e=new Error('coach');e.coach=true;throw e;}
+  if(!r.ok)throw r;return r.json();
+}
+async function pull(){ const d=await apiGet('/api/state'); mergeServer(d); setOnline(true); cacheSave(); }
+async function manualRefresh(){ try{await pull();setOnline(true);renderCurrent();renderData();toast('Synced');}catch(e){setOnline(false);renderData();toast('Offline — can’t reach server');} }
+async function poll(){
+  const ae=document.activeElement;
+  if(ae&&/INPUT|SELECT|TEXTAREA/.test(ae.tagName))return; // don't clobber mid-edit
+  if(document.querySelector('.modal.on'))return;
+  try{await pull();setOnline(true);renderCurrent();}catch(e){setOnline(false);setOnline(false);}
+}
+async function coachAction(method,path,body,onOk){
+  try{const r=await apiSend(method,path,body,true);setOnline(true);onOk&&onOk(r);cacheSave();}
+  catch(e){ if(e&&e.coach){toast('Coach PIN needed');openCoachPin();} else {setOnline(false);toast('Action failed — offline?');} }
+}
+
+/* ============ ACTIONS ============ */
+function go(tab){
+  curTab=tab;
+  document.querySelectorAll('section').forEach(s=>s.classList.remove('on'));$('sec-'+tab).classList.add('on');
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  renderCurrent(); if(tab!=='data')renderData();
+  window.scrollTo&&window.scrollTo(0,0);
+}
+function bump(k,d){
+  let v=settings[k]+d;
+  if(k==='lineupSize')v=Math.max(1,Math.min(15,v));
+  if(k==='minFemales')v=Math.max(0,Math.min(settings.lineupSize,v));
+  const body={[k]:v}; if(k==='lineupSize'&&settings.minFemales>v)body.minFemales=v;
+  coachAction('PUT','/api/settings',body,()=>{settings[k]=v;if(body.minFemales!=null)settings.minFemales=body.minFemales;renderLineup();});
+}
+function changeRankBy(v){ coachAction('PUT','/api/settings',{rankBy:v},()=>{settings.rankBy=v;renderLineup();}); }
+function changeDefAvg(v){ const n=+v||100; coachAction('PUT','/api/settings',{defaultAvg:n},()=>{settings.defaultAvg=n;renderAll();}); }
+function toggleExpand(no){const el=$('exp-'+no);document.querySelectorAll('.expand').forEach(e=>{if(e!==el)e.classList.remove('on')});el.classList.toggle('on');}
+function setFlag(no,flag){
+  const p=P(no);let body={};
+  if(flag==='available'){const makeAvail=!(p.available&&!p.lockOut);body={available:makeAvail,lockOut:!makeAvail};}
+  if(flag==='lockIn'){const v=!p.lockIn;body={lockIn:v};if(v){body.available=true;body.lockOut=false;}}
+  coachAction('PUT','/api/players/'+no,body,()=>{Object.assign(p,body);renderRoster();renderLineup();});
+}
+function setEst(no){const p=P(no);const v=+val('est-'+no);const est=v>0?v:null;coachAction('PUT','/api/players/'+no,{estAvg:est},()=>{p.estAvg=est;renderRoster();renderLineup();toast('Estimate saved');});}
+function prefillWho(no){setTimeout(()=>{const s=$('logWho');if(s)s.value=no;},60);}
+function onWhoChange(){ if(ui.mode!=="coach"){ ui.me=+val('logWho'); saveUI(); } }
+function P(no){return players.find(p=>p.no===+no);}
+async function logGame(){
+  const no=+val('logWho');const score=+val('logScore');
+  if(!(score>=0&&score<=300)){toast('Enter a score 0–300');return;}
+  const body={no,score,strikes:+val('logStrikes')||0,spares:+val('logSpares')||0,date:val('logDate')};
+  try{
+    const {game}=await apiSend('POST','/api/games',body,false);
+    const p=P(no);p.games.push(game);cacheSave();setOnline(true);
+    $('logScore').value='';$('logStrikes').value='';$('logSpares').value='';
+    toast('🎳 Saved — '+score);renderPractice();
+  }catch(e){setOnline(false);toast('Offline — can’t save right now');}
+}
+function toggleVerify(no,ts){const p=P(no);coachAction('POST',`/api/games/${no}/${ts}/verify`,null,(r)=>{const g=p.games.find(x=>String(x.ts)===String(ts));if(g)g.verified=r.verified;renderPractice();});}
+function delGame(no,ts){const p=P(no);coachAction('DELETE',`/api/games/${no}/${ts}`,null,()=>{p.games=p.games.filter(x=>String(x.ts)!==String(ts));renderPractice();});}
+function resetAll(){if(confirm("Reset to the original 15-player roster? All logged games on the team server will be erased.")){coachAction('POST','/api/reset',null,async()=>{await pull();renderAll();go('lineup');toast('Reset done');});}}
+
+/* mode + coach pin */
+function applyChrome(){$('modeTxt').textContent=ui.mode==="coach"?"Coach":"Player";$('hsub').textContent=ui.mode==="coach"?"IncrediBowl S2 · Coach":"IncrediBowl S2";}
+function applyUIChrome(){applyChrome();}
+function toggleMode(){
+  if(ui.mode==="coach"){ui.mode="player";saveUI();applyChrome();renderAll();toast('Player mode');}
+  else{openCoachPin();}
+}
+function openCoachPin(){$('pinModal').classList.add('on');setTimeout(()=>{const i=$('pinInput');if(i)i.focus();},60);}
+async function submitPin(){
+  const pin=(val('pinInput')||'').trim();if(!pin){toast('Enter a PIN');return;}
+  try{ const r=await apiSend('POST','/api/coach/verify',{pin},false);
+    if(r.ok){coachPin=pin;localStorage.setItem(PINKEY,pin);ui.mode="coach";saveUI();closeModal('pinModal');$('pinInput').value='';applyChrome();renderAll();toast('Coach mode unlocked');}
+    else toast('Wrong PIN');
+  }catch(e){setOnline(false);toast('Can’t reach server');}
+}
+function closeModal(id){$(id).classList.remove('on');}
+
+/* data tab */
+function exportData(){
+  const payload={t:"voxstars",v:2,players:players.map(p=>({no:p.no,games:p.games||[]})),ts:Date.now()};
+  const str=JSON.stringify(payload);const blob=new Blob([str],{type:"application/json"});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download="voxstars-snapshot.json";a.click();
+  navigator.clipboard&&navigator.clipboard.writeText(str).then(()=>{},()=>{});toast('Snapshot exported');
+}
+function openImport(){ if(ui.mode!=="coach"){toast('Coach mode required');openCoachPin();return;} $('importModal').classList.add('on'); }
+function doImport(){
+  try{const d=JSON.parse((val('importText')||'').trim());if(d.t!=="voxstars")throw 0;
+    coachAction('POST','/api/import',{players:d.players},async(r)=>{await pull();closeModal('importModal');$('importText').value='';renderAll();toast((r.added||0)+' games merged');});
+  }catch(e){toast('Invalid snapshot code');}
+}
+function copyText(){
+  let out="VOX STARS — practice log\n";
+  players.forEach(p=>{const e=eff(p);if((p.games||[]).length){out+=`\n${p.name} (avg ${e.avg}, ${e.n} gm):\n`;p.games.forEach(g=>out+=`  ${g.date}  ${g.score}  (${g.strikes||0} strikes)\n`);}});
+  navigator.clipboard?navigator.clipboard.writeText(out).then(()=>toast('Copied'),()=>toast('Copy failed')):toast('Copy not supported');
+}
+
+let toastT;function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),1900);}
+
+/* ============ BOOT ============ */
+async function boot(){
+  loadUI();
+  if(!ROSTER.some(r=>r.no===ui.me))ui.me=null;
+  seedPlayers();
+  try{ await pull(); }catch(e){ setOnline(false); if(!cacheLoad()){seedPlayers();} }
+  applyChrome(); renderAll(); go('lineup');
+  setInterval(poll,15000);
+  window.addEventListener('online',manualRefresh);
+}
+boot();
+</script>
+</body>
+</html>
