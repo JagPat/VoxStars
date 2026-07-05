@@ -25,9 +25,9 @@ const ROSTER_NOS = [149, 171, 175, 99, 31, 22, 114, 38, 137, 8, 128, 41, 49, 43,
 function defaultState() {
   return {
     players: ROSTER_NOS.map(no => ({
-      no, games: [], available: true, lockIn: false, lockOut: false, estAvg: null
+      no, games: [], available: true, lockIn: false, lockOut: false, estAvg: null, team: null
     })),
-    settings: { lineupSize: 5, minFemales: 1, rankBy: 'avg', defaultAvg: 100 },
+    settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'balanced', teamSize: 5, teamsCount: 3 },
     updatedAt: Date.now()
   };
 }
@@ -38,8 +38,8 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     // make sure every canonical player exists (roster is authoritative)
     const byNo = new Map(s.players.map(p => [p.no, p]));
-    s.players = ROSTER_NOS.map(no => byNo.get(no) || { no, games: [], available: true, lockIn: false, lockOut: false, estAvg: null });
-    s.settings = Object.assign({ lineupSize: 5, minFemales: 1, rankBy: 'avg', defaultAvg: 100 }, s.settings || {});
+    s.players = ROSTER_NOS.map(no => { const p = byNo.get(no) || {}; return { no, games: p.games || [], available: p.available !== false, lockIn: !!p.lockIn, lockOut: !!p.lockOut, estAvg: (p.estAvg ?? null), team: (p.team ?? null) }; });
+    s.settings = Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'balanced', teamSize: 5, teamsCount: 3 }, s.settings || {});
     return s;
   } catch (e) {
     const s = defaultState();
@@ -125,16 +125,26 @@ app.put('/api/players/:no', (req, res) => {
   if (b.lockIn   !== undefined) p.lockIn   = !!b.lockIn;
   if (b.lockOut  !== undefined) p.lockOut  = !!b.lockOut;
   if (b.estAvg   !== undefined) p.estAvg   = (b.estAvg === null || b.estAvg === '') ? null : Number(b.estAvg);
+  if (b.team     !== undefined) p.team     = (['A','B','C'].includes(b.team)) ? b.team : null;
   persist();
   res.json({ ok: true, player: p });
+});
+
+// Coach: assign the whole 3-team split at once { assignments: { "149":"A", ... } }
+app.post('/api/teams', (req, res) => {
+  if (!requireCoach(req, res)) return;
+  const a = (req.body && req.body.assignments) || {};
+  Object.keys(a).forEach(no => { const p = P(no); if (p) p.team = ['A','B','C'].includes(a[no]) ? a[no] : null; });
+  persist();
+  res.json({ ok: true });
 });
 
 // Coach: update lineup settings
 app.put('/api/settings', (req, res) => {
   if (!requireCoach(req, res)) return;
   const b = req.body || {};
-  ['lineupSize', 'minFemales', 'defaultAvg'].forEach(k => { if (b[k] !== undefined) state.settings[k] = Number(b[k]); });
-  if (b.rankBy === 'avg' || b.rankBy === 'high') state.settings.rankBy = b.rankBy;
+  ['defaultAvg', 'capCr', 'teamSize', 'teamsCount'].forEach(k => { if (b[k] !== undefined) state.settings[k] = Number(b[k]); });
+  if (b.splitStrategy === 'balanced' || b.splitStrategy === 'stacked') state.settings.splitStrategy = b.splitStrategy;
   persist();
   res.json({ ok: true, settings: state.settings });
 });

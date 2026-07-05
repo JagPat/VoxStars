@@ -1,13 +1,16 @@
 # VOX STARS Cockpit 🎳
 
-Shared team app for **VOX STARS** in the **IncrediBowl S2** ten-pin bowling league.
-Best-XI combination optimizer + practice tracker, with data synced live across the whole team.
+Shared team app for **VOX STARS** in **Design IncrediBowl — Ahmedabad Season 2** (ten-pin bowling), with data synced live across the whole team.
 
-- **Lineup** — recommends your strongest XI from the 15-player squad (ranks by average, enforces bowlers-per-match + minimum-women, honours lock in/out and availability).
-- **Roster** — availability, lock a player into the XI, estimated averages for new bowlers.
-- **Practice** — players log each game (score / strikes / spares); averages update and the lineup re-ranks automatically.
-- **Rivals** — compare your projected total against any opponent.
+Built to the official DIB S2 format: your 15-player Master Squad splits into **3 sub-teams (A / B / C)** of **4 men + 1 woman** each, every sub-team capped at **₹25 Cr** base value (final auction price), with the Captain and two Vice-Captains fixed to separate teams.
+
+- **Teams** — auto-forms three valid, competitively balanced sub-teams (or stacks Team A), enforcing 4M+1W, the ₹25 Cr cap, and the fixed Captain/VC leads. Live validation flags any rule break; in Coach mode, tap A/B/C to move a player.
+- **Roster** — player roles (Captain/VC), sub-team, availability, and estimated averages for new bowlers.
+- **Practice** — players log each game (score / strikes / spares); averages update and the sub-team projections re-balance automatically.
+- **Rivals** — league ladder of all 12 brands + a head-to-head comparator.
 - Data lives on a small server + JSON store on a persistent volume, so everyone sees the same numbers.
+
+**VOX STARS leads:** Captain Ar. Jagrut Patel (Team A), VC1 Sandeep Sisodiya (Team B), VC2 Siddharth Bhatt (Team C). Squad base value totals 60 Cr.
 
 ---
 

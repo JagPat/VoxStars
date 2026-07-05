@@ -18,7 +18,7 @@ async function send(method,p,body,pin){
 
   r=await get('/api/state'); d=await J(r);
   ok(d.players.length===15,'state returns 15 players');
-  ok(d.settings.lineupSize===5,'default lineupSize 5');
+  ok(d.settings.capCr===25,'default sub-team cap ₹25 Cr');
 
   // player logs a game (open, no pin)
   r=await send('POST','/api/games',{no:99,score:170,strikes:5,spares:2,date:'2026-07-05'});
@@ -40,16 +40,24 @@ async function send(method,p,body,pin){
   // coach action WITH wrong pin -> 401
   r=await send('PUT','/api/settings',{lineupSize:6},'0000'); ok(r.status===401,'wrong PIN blocked');
   // coach action WITH pin -> ok
-  r=await send('PUT','/api/settings',{lineupSize:6,minFemales:2},PIN); d=await J(r);
-  ok(r.status===200 && d.settings.lineupSize===6 && d.settings.minFemales===2,'settings update with PIN');
+  r=await send('PUT','/api/settings',{capCr:22,splitStrategy:'stacked'},PIN); d=await J(r);
+  ok(r.status===200 && d.settings.capCr===22 && d.settings.splitStrategy==='stacked','settings update with PIN');
 
   // coach verify
   r=await send('POST',`/api/games/99/${ts}/verify`,null,PIN); d=await J(r);
   ok(r.status===200 && d.verified===true,'coach verified the game');
 
-  // coach player flag
-  r=await send('PUT','/api/players/149',{lockIn:true},PIN); d=await J(r);
-  ok(r.status===200 && d.player.lockIn===true,'coach locked in player 149');
+  // coach assigns a player to a sub-team
+  r=await send('PUT','/api/players/149',{team:'A'},PIN); d=await J(r);
+  ok(r.status===200 && d.player.team==='A','coach assigned player 149 to Team A');
+
+  // bulk team assignment
+  r=await send('POST','/api/teams',{assignments:{171:'B',175:'C'}},PIN); d=await J(r);
+  ok(r.status===200 && d.ok,'bulk /api/teams accepted');
+  r=await get('/api/state'); d=await J(r);
+  ok(d.players.find(x=>x.no===171).team==='B' && d.players.find(x=>x.no===175).team==='C','team assignments persisted');
+  // team assignment blocked without PIN
+  r=await send('POST','/api/teams',{assignments:{99:'A'}}); ok(r.status===401,'team assignment blocked without PIN');
 
   // coach pin verify endpoint
   r=await send('POST','/api/coach/verify',{pin:PIN}); d=await J(r); ok(d.ok===true,'correct PIN verifies');
@@ -62,7 +70,7 @@ async function send(method,p,body,pin){
   // reset
   r=await send('POST','/api/reset',null,PIN); ok(r.status===200,'coach reset ok');
   r=await get('/api/state'); d=await J(r);
-  ok(d.players.find(x=>x.no===99).games.length===0 && d.settings.lineupSize===5,'state reset to defaults');
+  ok(d.players.find(x=>x.no===99).games.length===0 && d.settings.capCr===25 && d.players.every(p=>p.team===null),'state reset to defaults');
 
   // frontend served
   r=await get('/'); const html=await r.text();
