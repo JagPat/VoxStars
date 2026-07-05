@@ -17,8 +17,8 @@ Built to the official DIB S2 format: your 15-player Master Squad splits into **3
 ## How the team uses it
 
 1. Open the deployed URL on your phone → **Add to Home Screen** (works like an app).
-2. Default is **Player** mode — pick "You are" and log your practice games.
-3. The captain/coach taps **Mode → enter coach PIN** to set the lineup, verify games, and edit the roster.
+2. **Players** get a personal **My Game** dashboard: pick "You are", see your **target** and a progress ring toward it, your games / best / strikes / spares and recent-form trend, a **game plan** tailored to your own numbers, and a one-tap game logger. Players don't see team splits or scores — just their own improvement.
+3. **Coach / Captain** taps **Mode → enter coach PIN** for the full view: form the three sub-teams (powerhouse / balanced / tiered, with pins + live re-optimize), set each player's target, verify games, run the rivals ladder, and manage the roster.
 
 ---
 

@@ -25,7 +25,7 @@ const ROSTER_NOS = [149, 171, 175, 99, 31, 22, 114, 38, 137, 8, 128, 41, 49, 43,
 function defaultState() {
   return {
     players: ROSTER_NOS.map(no => ({
-      no, games: [], available: true, lockIn: false, lockOut: false, estAvg: null, team: null, pin: false
+      no, games: [], available: true, lockIn: false, lockOut: false, estAvg: null, team: null, pin: false, target: null
     })),
     settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 },
     updatedAt: Date.now()
@@ -38,7 +38,7 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     // make sure every canonical player exists (roster is authoritative)
     const byNo = new Map(s.players.map(p => [p.no, p]));
-    s.players = ROSTER_NOS.map(no => { const p = byNo.get(no) || {}; return { no, games: p.games || [], available: p.available !== false, lockIn: !!p.lockIn, lockOut: !!p.lockOut, estAvg: (p.estAvg ?? null), team: (p.team ?? null), pin: !!p.pin }; });
+    s.players = ROSTER_NOS.map(no => { const p = byNo.get(no) || {}; return { no, games: p.games || [], available: p.available !== false, lockIn: !!p.lockIn, lockOut: !!p.lockOut, estAvg: (p.estAvg ?? null), team: (p.team ?? null), pin: !!p.pin, target: (p.target ?? null) }; });
     s.settings = Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 }, s.settings || {});
     return s;
   } catch (e) {
@@ -127,8 +127,19 @@ app.put('/api/players/:no', (req, res) => {
   if (b.estAvg   !== undefined) p.estAvg   = (b.estAvg === null || b.estAvg === '') ? null : Number(b.estAvg);
   if (b.team     !== undefined) p.team     = (['A','B','C'].includes(b.team)) ? b.team : null;
   if (b.pin      !== undefined) p.pin      = !!b.pin;
+  if (b.target   !== undefined) p.target   = (b.target === null || b.target === '') ? null : Number(b.target);
   persist();
   res.json({ ok: true, player: p });
+});
+
+// A player sets their OWN target (open — it's a personal goal, not a team control)
+app.post('/api/mytarget', (req, res) => {
+  const { no, target } = req.body || {};
+  const p = P(no);
+  if (!p) return res.status(404).json({ error: 'unknown player' });
+  p.target = (target === null || target === '') ? null : Number(target);
+  persist();
+  res.json({ ok: true, target: p.target });
 });
 
 // Coach: assign the whole 3-team split at once { assignments: { "149":"A", ... } }

@@ -55,6 +55,14 @@ async function send(method,p,body,pin){
   r=await send('PUT','/api/players/128',{pin:true},PIN); d=await J(r);
   ok(r.status===200 && d.player.pin===true,'coach pinned player 128');
 
+  // coach sets a player's target
+  r=await send('PUT','/api/players/149',{target:150},PIN); d=await J(r);
+  ok(r.status===200 && d.player.target===150,'coach set player 149 target 150');
+
+  // player sets their OWN target (open, no PIN)
+  r=await send('POST','/api/mytarget',{no:149,target:140}); d=await J(r);
+  ok(r.status===200 && d.target===140,'player set own target via /api/mytarget (no PIN)');
+
   // bulk team assignment
   r=await send('POST','/api/teams',{assignments:{171:'B',175:'C'}},PIN); d=await J(r);
   ok(r.status===200 && d.ok,'bulk /api/teams accepted');
@@ -74,7 +82,7 @@ async function send(method,p,body,pin){
   // reset
   r=await send('POST','/api/reset',null,PIN); ok(r.status===200,'coach reset ok');
   r=await get('/api/state'); d=await J(r);
-  ok(d.players.find(x=>x.no===99).games.length===0 && d.settings.capCr===25 && d.players.every(p=>p.team===null&&!p.pin),'state reset to defaults');
+  ok(d.players.find(x=>x.no===99).games.length===0 && d.settings.capCr===25 && d.players.every(p=>p.team===null&&!p.pin&&p.target===null),'state reset to defaults');
 
   // frontend served
   r=await get('/'); const html=await r.text();

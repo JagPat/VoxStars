@@ -109,6 +109,20 @@
   .tmove{display:flex;gap:4px;margin-left:8px;flex:0 0 auto}
   .tmb{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--navy2);color:var(--muted);font-size:11px;font-weight:800;cursor:pointer}
   .tmb.on{background:var(--gold);color:var(--navy2);border-color:var(--gold)}
+  .hero{background:linear-gradient(160deg,var(--navy3),var(--navy2));border:1px solid var(--line);border-radius:16px;padding:16px;text-align:center;box-shadow:var(--shadow);margin-bottom:12px}
+  .ring{position:relative;width:150px;height:150px;margin:2px auto 6px}
+  .ring .rv{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .rv b{font-size:36px;font-weight:800;color:#fff;line-height:1}
+  .ring .rv small{color:var(--gold2);font-size:11.5px;margin-top:3px;letter-spacing:.3px}
+  .mstat{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+  .mstat .s{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 4px;text-align:center}
+  .mstat .s .v{font-size:19px;font-weight:800}
+  .mstat .s .k{font-size:9.5px;letter-spacing:.3px;text-transform:uppercase;color:var(--muted);margin-top:2px}
+  .tip{display:flex;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.45}
+  .tip:last-child{border-bottom:0}.tip .b{flex:0 0 auto}
+  .goal{background:rgba(245,179,1,.12);border:1px solid rgba(245,179,1,.4);border-radius:12px;padding:11px 13px;font-size:13px;font-weight:700;color:var(--gold2)}
+  .spark{display:flex;align-items:flex-end;gap:4px;height:44px;margin-top:10px}
+  .spark .bar{flex:1;background:linear-gradient(180deg,var(--gold2),var(--gold));border-radius:3px 3px 0 0;min-height:3px}
   .cmp-team{display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:2px 0}
   .verdict{text-align:center;font-size:15px;font-weight:800;padding:10px;border-radius:11px;margin-top:6px}
   .verdict.win{background:rgba(46,193,107,.14);color:var(--good);border:1px solid rgba(46,193,107,.4)}
@@ -142,6 +156,14 @@
 
 <main class="wrap">
   <div id="noServerBanner"></div>
+
+  <!-- MY GAME (player mode) -->
+  <section id="sec-me">
+    <div class="sec-h"><h2>My Game</h2><div class="hint" id="meHint"></div></div>
+    <div class="card tight"><label class="fld">You are</label><select id="meWho" onchange="setMe(this.value)"></select></div>
+    <div id="meBody"></div>
+  </section>
+
   <!-- TEAMS -->
   <section id="sec-teams" class="on">
     <div class="sec-h"><h2>Sub-Teams</h2><div class="hint" id="teamsHint"></div></div>
@@ -244,6 +266,7 @@
 </main>
 
 <nav><div class="inner">
+  <button data-tab="me" onclick="go('me')"><span class="i">🎯</span>My Game</button>
   <button data-tab="teams" class="active" onclick="go('teams')"><span class="i">🏆</span>Teams</button>
   <button data-tab="roster" onclick="go('roster')"><span class="i">👥</span>Roster</button>
   <button data-tab="practice" onclick="go('practice')"><span class="i">🎳</span>Practice</button>
@@ -315,10 +338,10 @@ let coachPin=localStorage.getItem(PINKEY)||"";
 let online=false, lastSync=0, curTab="teams";
 
 /* ============ MODEL HELPERS ============ */
-function seedPlayers(){ players=ROSTER.map(r=>({...r,games:[],available:true,lockIn:false,lockOut:false,estAvg:null,team:null,pin:false})); }
+function seedPlayers(){ players=ROSTER.map(r=>({...r,games:[],available:true,lockIn:false,lockOut:false,estAvg:null,team:null,pin:false,target:null})); }
 function mergeServer(d){
   const byNo=new Map((d.players||[]).map(p=>[p.no,p]));
-  players=ROSTER.map(r=>{ const s=byNo.get(r.no)||{}; return {...r,games:s.games||[],available:s.available!==false,lockIn:!!s.lockIn,lockOut:!!s.lockOut,estAvg:(s.estAvg??null),team:(s.team??null),pin:!!s.pin}; });
+  players=ROSTER.map(r=>{ const s=byNo.get(r.no)||{}; return {...r,games:s.games||[],available:s.available!==false,lockIn:!!s.lockIn,lockOut:!!s.lockOut,estAvg:(s.estAvg??null),team:(s.team??null),pin:!!s.pin,target:(s.target??null)}; });
   if(d.settings) settings={...DEFSET,...d.settings};
   lastSync=d.updatedAt||Date.now();
 }
@@ -503,6 +526,7 @@ function renderRoster(){
         <div class="statgrid"><div class="s"><div class="k">Avg</div><div class="v mono">${av}</div></div><div class="s"><div class="k">High</div><div class="v mono">${e.high||'—'}</div></div><div class="s"><div class="k">Practice</div><div class="v mono">${pr.n}</div></div><div class="s"><div class="k">Point</div><div class="v mono">${p.pt}</div></div></div>
         ${coach?`<div class="toggles"><div class="chip ${p.available&&!p.lockOut?'on':''}" onclick="event.stopPropagation();setFlag(${p.no},'available')">${p.available&&!p.lockOut?'✓ Available':'Unavailable'}</div></div>
           ${(e.src==="est"||e.src==="none")?`<div style="margin-bottom:8px"><label class="fld">Estimated average</label><div class="row" style="gap:8px"><input type="number" inputmode="numeric" id="est-${p.no}" value="${p.estAvg??''}" placeholder="e.g. 105" style="flex:1"><button class="btn tiny gold" onclick="event.stopPropagation();setEst(${p.no})">Set</button></div></div>`:''}
+          <div style="margin-bottom:8px"><label class="fld">Target score (player's goal)</label><div class="row" style="gap:8px"><input type="number" inputmode="numeric" id="tgt-${p.no}" value="${p.target??''}" placeholder="150" style="flex:1"><button class="btn tiny gold" onclick="event.stopPropagation();setTarget(${p.no})">Set</button></div></div>
           <button class="btn tiny ghost" onclick="event.stopPropagation();go('practice');prefillWho(${p.no})">🎳 Log a game for ${p.name.split(' ').slice(-1)[0]}</button>`
         :`<p class="note">Coach mode required to edit this player.</p>`}
       </div></div>`;
@@ -557,6 +581,87 @@ function renderLadder(){
     </div>`).join('');
 }
 function loadRival(name,total){ $('cmpName').value=name; $('cmpScore').value=total; renderCompare(); const el=$('cmpResult'); el&&el.scrollIntoView&&el.scrollIntoView({behavior:'smooth',block:'center'}); }
+/* ===== PLAYER MODE — personal improvement dashboard ===== */
+function guidance(p){
+  const g=p.games||[], n=g.length, e=eff(p), avg=e.avg, target=(p.target!=null?+p.target:150);
+  if(!n){
+    const tips=[];
+    if(avg!=null){ const gp=Math.round(target-avg); tips.push({b:'🎯',t: avg>=target? `Your prior average is ${avg} — already at your ${target} target. Log practice games to keep it sharp and build your strike plan.` : `Your prior average is ${avg}, ${gp} short of your ${target} target. Log practice games so we can build your strike & spare plan.`}); }
+    else tips.push({b:'🎯',t:'Log your first practice game to unlock your personal plan — record your score, strikes and spares.'});
+    return {n:0,avg,target,gap:Math.round(target-(avg||0)),strikes:0,spares:0,spg:0,sppg:0,high:e.high||0,
+      tips, goal: avg!=null? `Log a practice game and beat ${avg}.` : 'Bowl a game and tap Save my game.'};
+  }
+  const strikes=g.reduce((s,x)=>s+(+x.strikes||0),0), spares=g.reduce((s,x)=>s+(+x.spares||0),0);
+  const spg=strikes/n, sppg=spares/n, high=Math.max(...g.map(x=>+x.score||0));
+  const last3=g.slice(-3).map(x=>+x.score||0), prev=g.slice(-6,-3).map(x=>+x.score||0);
+  const mean=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:0;
+  const gap=Math.round(target-(avg||0)), tips=[];
+  if(avg>=target) tips.push({b:'🎯',t:`You're averaging ${avg} — at or above your ${target} target. Now make ${target} your floor: aim to clear it every single game.`});
+  else tips.push({b:'🎯',t:`You're averaging ${avg}, ${gap} short of your ${target} target — about ${Math.max(1,Math.ceil(gap/25))} more strike${Math.ceil(gap/25)>1?'s':''} a game. Very reachable.`});
+  tips.push({b:'⚡',t:`Strikes are your biggest lever — you're landing ${spg.toFixed(1)} a game. Groove one repeatable first ball; even +1 a game lifts your score fast.`});
+  tips.push({b:'🎳',t:`Spares win back the cheap pins — you're clearing ${sppg.toFixed(1)} a game. Make a rule: never leave a single pin standing.`});
+  if(prev.length){ const d=Math.round(mean(last3)-mean(prev)); if(d>=3) tips.push({b:'📈',t:`You're trending up — +${d} across your last 3 games. Keep the exact same setup and pace.`}); else if(d<=-3) tips.push({b:'🔄',t:`Your last few dipped a little — that's normal. Reset to a slow, clean first ball and rebuild rhythm.`}); }
+  const goal = avg>=target? `Next session: beat your best of ${high}.` : `Next session: top your ${avg} average and land at least ${Math.ceil(spg)+1} strikes.`;
+  return {n,avg,target,gap,strikes,spares,spg,sppg,high,tips,goal};
+}
+function renderMe(){
+  const sel=$('meWho'); if(!sel) return;
+  sel.innerHTML=players.map(p=>`<option value="${p.no}">${p.name}${p.g==='F'?' (W)':''}</option>`).join('');
+  if(ui.me==null||!P(ui.me))ui.me=players[0].no; sel.value=ui.me;
+  const p=P(ui.me), e=eff(p), avg=e.avg, gd=guidance(p), target=gd.target;
+  const pct=avg?Math.max(0,Math.min(100,avg/target*100)):0, C=2*Math.PI*54, off=C*(1-pct/100);
+  $('meHint').textContent = e.n? e.n+' games' : 'no games yet';
+  const g=p.games||[], recent=g.slice(-8), mx=Math.max(150,...recent.map(x=>+x.score||0),1);
+  const spark=recent.length? '<div class="spark">'+recent.map(x=>`<div class="bar" style="height:${Math.max(6,(+x.score||0)/mx*100)}%" title="${x.score}"></div>`).join('')+'</div>' : '';
+  $('meBody').innerHTML=`
+    <div class="hero">
+      <div class="ring"><svg width="150" height="150" viewBox="0 0 120 120" style="transform:rotate(-90deg)">
+        <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(255,255,255,.10)" stroke-width="10"/>
+        <circle cx="60" cy="60" r="54" fill="none" stroke="url(#gg)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
+        <defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffcf3f"/><stop offset="1" stop-color="#f5b301"/></linearGradient></defs>
+      </svg><div class="rv"><b>${avg==null?'—':avg}</b><small>avg · target ${target}</small></div></div>
+      <div class="pname" style="justify-content:center;font-size:15px">${p.name} ${roleTag(p)}</div>
+      <div style="font-size:13px;margin-top:4px;font-weight:600" class="${avg>=target?'gold':'muted'}">${avg==null?'Log a game to start tracking':(avg>=target?`🎯 On target — ${avg} ≥ ${target}`:`${gd.gap} pins to your ${target} target`)}</div>
+      ${spark}
+    </div>
+    <div class="mstat">
+      <div class="s"><div class="v mono">${e.n||0}</div><div class="k">Games</div></div>
+      <div class="s"><div class="v mono">${gd.high||'—'}</div><div class="k">Best</div></div>
+      <div class="s"><div class="v mono">${gd.strikes}</div><div class="k">Strikes</div></div>
+      <div class="s"><div class="v mono">${gd.spares}</div><div class="k">Spares</div></div>
+    </div>
+    <div class="card"><h3 style="font-size:13px;margin-bottom:6px" class="gold">YOUR GAME PLAN</h3>
+      ${gd.tips.map(t=>`<div class="tip"><span class="b">${t.b}</span><span>${t.t}</span></div>`).join('')}
+      <div class="sp8"></div><div class="goal">▶ ${gd.goal}</div></div>
+    <div class="card qlog"><h3 style="font-size:13px;margin-bottom:10px" class="gold">＋ Log my game</h3>
+      <div class="setgrid" style="margin-bottom:9px">
+        <div class="fieldset"><label class="fld">Score (0–300)</label><input id="meScore" type="number" inputmode="numeric" min="0" max="300" placeholder="e.g. 138"></div>
+        <div style="width:74px"><label class="fld">Strikes</label><input id="meStrikes" type="number" inputmode="numeric" min="0" max="12" placeholder="0"></div>
+        <div style="width:74px"><label class="fld">Spares</label><input id="meSpares" type="number" inputmode="numeric" min="0" max="10" placeholder="0"></div>
+      </div>
+      <div style="margin-bottom:11px"><label class="fld">Date</label><input id="meDate" type="date"></div>
+      <button class="btn gold" onclick="logMyGame()">🎳 Save my game</button></div>
+    <div class="card tight"><h3 style="font-size:12.5px;letter-spacing:.5px" class="muted">MY RECENT GAMES</h3>
+      ${g.length? [...g].reverse().slice(0,10).map(x=>`<div class="gamerow"><div class="score-badge">${x.score}</div><div class="grow"><div style="font-size:12.5px" class="pmeta">${x.date||''} · ${x.strikes||0}✕ strikes · ${x.spares||0}/ spares${(+x.score>=target)?' · <span class="gold">hit target!</span>':''}</div></div></div>`).join(''):'<p class="note">No games yet.</p>'}</div>
+    <div class="card tight"><label class="fld">My target score</label><div class="row" style="gap:8px"><input id="meTarget" type="number" inputmode="numeric" value="${p.target!=null?p.target:''}" placeholder="150" style="flex:1"><button class="btn tiny gold" onclick="setMyTarget()">Set</button></div><p class="note" style="margin-top:6px">Your coach can also set this for you.</p></div>`;
+  if($('meDate')&&!$('meDate').value)$('meDate').value=new Date().toISOString().slice(0,10);
+}
+function setMe(v){ ui.me=+v; saveUI(); renderMe(); }
+async function logMyGame(){
+  const score=+val('meScore'); if(!(score>=0&&score<=300)){toast('Enter a score 0–300');return;}
+  const body={no:ui.me,score,strikes:+val('meStrikes')||0,spares:+val('meSpares')||0,date:val('meDate')};
+  try{ const {game}=await apiSend('POST','/api/games',body,false); P(ui.me).games.push(game); cacheSave(); setOnline(true); toast('🎳 Saved — '+score); renderMe(); }
+  catch(e){ setOnline(false); toast('No server — open the Coolify URL or localhost:3000 to save.'); }
+}
+async function setMyTarget(){
+  const t=+val('meTarget')||null;
+  try{ await apiSend('POST','/api/mytarget',{no:ui.me,target:t},false); P(ui.me).target=t; cacheSave(); toast('Target set'); renderMe(); }
+  catch(e){ setOnline(false); toast('No server — can’t save target now.'); }
+}
+function applyNav(){
+  const coachTabs=['teams','roster','practice','compare','data'], playerTabs=['me'];
+  document.querySelectorAll('nav button').forEach(b=>{ const tb=b.dataset.tab; const show=(ui.mode==='coach')?coachTabs.includes(tb):playerTabs.includes(tb); b.style.display=show?'':'none'; });
+}
 function renderData(){
   const dot=$('syncDot2'),st=$('syncStatus'),sub=$('syncSub');
   dot.className='syncdot '+(online?'on':'off');
@@ -565,8 +670,8 @@ function renderData(){
   $('coachCard').style.display=ui.mode==="coach"?'block':'none';
   $('defAvg').value=settings.defaultAvg;
 }
-function renderCurrent(){ if(curTab==='teams')renderTeams();else if(curTab==='roster')renderRoster();else if(curTab==='practice')renderPractice();else if(curTab==='data')renderData();else if(curTab==='compare'){renderLadder();renderCompare();} }
-function renderAll(){renderTeams();renderRoster();renderPractice();renderData();applyChrome();}
+function renderCurrent(){ if(curTab==='me')renderMe();else if(curTab==='teams')renderTeams();else if(curTab==='roster')renderRoster();else if(curTab==='practice')renderPractice();else if(curTab==='data')renderData();else if(curTab==='compare'){renderLadder();renderCompare();} }
+function renderAll(){renderMe();renderTeams();renderRoster();renderPractice();renderData();applyChrome();}
 
 /* ============ SYNC / API ============ */
 function setOnline(v){online=v;$('syncDot').className='syncdot '+(v?'on':'off');}
@@ -616,6 +721,7 @@ function setFlag(no,flag){
   coachAction('PUT','/api/players/'+no,body,()=>{Object.assign(p,body);renderRoster();renderTeams();});
 }
 function setEst(no){const p=P(no);const v=+val('est-'+no);const est=v>0?v:null;coachAction('PUT','/api/players/'+no,{estAvg:est},()=>{p.estAvg=est;renderRoster();renderTeams();toast('Estimate saved');});}
+function setTarget(no){const p=P(no);const v=+val('tgt-'+no)||null;coachAction('PUT','/api/players/'+no,{target:v},()=>{p.target=v;renderRoster();renderMe();toast('Target set');});}
 function prefillWho(no){setTimeout(()=>{const s=$('logWho');if(s)s.value=no;},60);}
 function onWhoChange(){ if(ui.mode!=="coach"){ ui.me=+val('logWho'); saveUI(); } }
 function P(no){return players.find(p=>p.no===+no);}
@@ -635,17 +741,17 @@ function delGame(no,ts){const p=P(no);coachAction('DELETE',`/api/games/${no}/${t
 function resetAll(){if(confirm("Reset to the original 15-player roster? All logged games and team splits on the server will be erased.")){coachAction('POST','/api/reset',null,async()=>{await pull();renderAll();go('teams');toast('Reset done');});}}
 
 /* mode + coach pin */
-function applyChrome(){$('modeTxt').textContent=ui.mode==="coach"?"Coach":"Player";$('hsub').textContent=ui.mode==="coach"?"IncrediBowl S2 · Coach":"IncrediBowl S2";}
+function applyChrome(){$('modeTxt').textContent=ui.mode==="coach"?"Coach":"Player";$('hsub').textContent=ui.mode==="coach"?"IncrediBowl S2 · Coach":"IncrediBowl S2 · Player";applyNav();}
 function applyUIChrome(){applyChrome();}
 function toggleMode(){
-  if(ui.mode==="coach"){ui.mode="player";saveUI();applyChrome();renderAll();toast('Player mode');}
+  if(ui.mode==="coach"){ui.mode="player";saveUI();applyChrome();renderAll();go('me');toast('Player mode');}
   else{openCoachPin();}
 }
 function openCoachPin(){$('pinModal').classList.add('on');setTimeout(()=>{const i=$('pinInput');if(i)i.focus();},60);}
 async function submitPin(){
   const pin=(val('pinInput')||'').trim();if(!pin){toast('Enter a PIN');return;}
   try{ const r=await apiSend('POST','/api/coach/verify',{pin},false);
-    if(r.ok){coachPin=pin;localStorage.setItem(PINKEY,pin);ui.mode="coach";saveUI();closeModal('pinModal');$('pinInput').value='';applyChrome();renderAll();toast('Coach mode unlocked');}
+    if(r.ok){coachPin=pin;localStorage.setItem(PINKEY,pin);ui.mode="coach";saveUI();closeModal('pinModal');$('pinInput').value='';applyChrome();renderAll();go('teams');toast('Coach mode unlocked');}
     else toast('Wrong PIN');
   }catch(e){setOnline(false);toast('No server — open the Coolify URL or localhost:3000, not the .html file.');}
 }
@@ -678,7 +784,7 @@ async function boot(){
   if(!ROSTER.some(r=>r.no===ui.me))ui.me=null;
   seedPlayers();
   try{ await pull(); }catch(e){ setOnline(false); if(!cacheLoad()){seedPlayers();} }
-  applyChrome(); renderAll(); go('teams');
+  applyChrome(); renderAll(); go(ui.mode==='coach'?'teams':'me');
   if(location.protocol==='file:'&&$('noServerBanner')){
     $('noServerBanner').innerHTML='<div class="vbanner bad" style="margin:10px 0">⚠︎ You opened this as a <b>file</b>, so there is no backend — coach login and saving won’t work here. Open your <b>Coolify URL</b>, or run <code>npm start</code> in the <code>voxstars-app</code> folder and open <b>http://localhost:3000</b>.</div>';
   }
