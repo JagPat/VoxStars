@@ -4,21 +4,35 @@ Shared team app for **VOX STARS** in **Design IncrediBowl — Ahmedabad Season 2
 
 Built to the official DIB S2 format: your 15-player Master Squad splits into **3 sub-teams (A / B / C)** of **4 men + 1 woman** each, every sub-team capped at **₹25 Cr** base value (final auction price), with the Captain and two Vice-Captains fixed to separate teams.
 
-- **Teams** — a *living* optimizer. Pick a strategy (**Powerhouse** = one strong team · **Balanced** · **Tiered** strong→light), choose which team to load, and it forms three rule-valid sub-teams (4M+1W, ≤ ₹25 Cr, fixed Captain/VC leads). **Pin** the players you're happy with and re-roll the rest; a live prompt flags when new practice data makes a stronger split possible — one tap to apply. Tap A/B/C to move anyone; a data-confidence counter shows how many bowlers have real numbers yet.
-- **Roster** — player roles (Captain/VC), sub-team, availability, and estimated averages for new bowlers.
-- **Practice** — players log each game (score / strikes / spares); averages update and the sub-team projections re-balance automatically.
-- **Rivals** — league ladder of all 12 brands + a head-to-head comparator.
-- Data lives on a small server + JSON store on a persistent volume, so everyone sees the same numbers.
+The app is **role-based** behind a single login. Each person signs in as themselves (remembered on their phone) and sees only what their role should — a private, motivating **Player** app and a powerful **Coach/Captain** cockpit.
+
+**Player app** (bottom nav Me / My Team / Compete / Profile):
+
+- **Me** — your target + a progress ring, games / best / strikes / spares, a last-6 form chart, and a **game plan** written from your own numbers. Only you can edit your games.
+- **My Team** — your sub-team, **read-only**: you see your five and the team's projected series, but only each player edits their own scores.
+- **Compete** — where VOX STARS rank among the 12 brands, plus an opt-in, team-only strikes leaderboard.
+- **Log a game** — a fast sheet with a **Quick score** stepper *and* a **frame-by-frame scorer** that does the real ten-pin math (strikes, spares, 10th-frame bonus). Instant toast + Undo.
+
+**Coach / Captain cockpit** (Squad / Log session / Optimizer), unlocked with the coach PIN:
+
+- **Squad readiness board** — every player's avg, trend, confidence (games logged), target gap and availability, with **Nudge** and **Log-for-them** on anyone short of data.
+- **Session logger** — punch a whole lane's scores off the overhead monitor in one ~30-second pass (photo-OCR is flagged for next).
+- **Optimizer** — the living sub-team builder: Powerhouse / Balanced / Tiered, ₹25 Cr cap, fixed Captain/VC leads, pins, and a live "stronger split available → Apply" prompt.
+
+Data lives on a small server + JSON store on a persistent volume, so everyone sees the same numbers.
 
 **VOX STARS leads:** Captain Ar. Jagrut Patel (Team A), VC1 Sandeep Sisodiya (Team B), VC2 Siddharth Bhatt (Team C). Squad base value totals 60 Cr.
+
+> **Login note:** v1 uses a lightweight identity — you pick your name once and it's remembered on the device, with an optional local PIN; the coach unlocks the cockpit with the coach PIN. Real per-player invite links + PINs are the planned next step.
 
 ---
 
 ## How the team uses it
 
 1. Open the deployed URL on your phone → **Add to Home Screen** (works like an app).
-2. **Players** get a personal **My Game** dashboard: pick "You are", see your **target** and a progress ring toward it, your games / best / strikes / spares and recent-form trend, a **game plan** tailored to your own numbers, and a one-tap game logger. Players don't see team splits or scores — just their own improvement.
-3. **Coach / Captain** taps **Mode → enter coach PIN** for the full view: form the three sub-teams (powerhouse / balanced / tiered, with pins + live re-optimize), set each player's target, verify games, run the rivals ladder, and manage the roster.
+2. **Sign in as yourself** — pick your name once; you land straight on **Me** every time after.
+3. **Play & log:** after each game tap **＋ Log a game** (quick score, or tap the pins frame-by-frame). Your ring and plan update instantly.
+4. **The captain** opens **Profile → Coach / Captain access**, enters the coach PIN, and gets the Squad board, Session logger and Optimizer.
 
 ---
 
