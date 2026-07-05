@@ -40,8 +40,8 @@ async function send(method,p,body,pin){
   // coach action WITH wrong pin -> 401
   r=await send('PUT','/api/settings',{lineupSize:6},'0000'); ok(r.status===401,'wrong PIN blocked');
   // coach action WITH pin -> ok
-  r=await send('PUT','/api/settings',{capCr:22,splitStrategy:'stacked'},PIN); d=await J(r);
-  ok(r.status===200 && d.settings.capCr===22 && d.settings.splitStrategy==='stacked','settings update with PIN');
+  r=await send('PUT','/api/settings',{capCr:22,splitStrategy:'tiered',powerTeam:'B'},PIN); d=await J(r);
+  ok(r.status===200 && d.settings.capCr===22 && d.settings.splitStrategy==='tiered' && d.settings.powerTeam==='B','settings update (cap/strategy/powerTeam)');
 
   // coach verify
   r=await send('POST',`/api/games/99/${ts}/verify`,null,PIN); d=await J(r);
@@ -50,6 +50,10 @@ async function send(method,p,body,pin){
   // coach assigns a player to a sub-team
   r=await send('PUT','/api/players/149',{team:'A'},PIN); d=await J(r);
   ok(r.status===200 && d.player.team==='A','coach assigned player 149 to Team A');
+
+  // coach pins a player
+  r=await send('PUT','/api/players/128',{pin:true},PIN); d=await J(r);
+  ok(r.status===200 && d.player.pin===true,'coach pinned player 128');
 
   // bulk team assignment
   r=await send('POST','/api/teams',{assignments:{171:'B',175:'C'}},PIN); d=await J(r);
@@ -70,7 +74,7 @@ async function send(method,p,body,pin){
   // reset
   r=await send('POST','/api/reset',null,PIN); ok(r.status===200,'coach reset ok');
   r=await get('/api/state'); d=await J(r);
-  ok(d.players.find(x=>x.no===99).games.length===0 && d.settings.capCr===25 && d.players.every(p=>p.team===null),'state reset to defaults');
+  ok(d.players.find(x=>x.no===99).games.length===0 && d.settings.capCr===25 && d.players.every(p=>p.team===null&&!p.pin),'state reset to defaults');
 
   // frontend served
   r=await get('/'); const html=await r.text();

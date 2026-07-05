@@ -4,7 +4,7 @@ Shared team app for **VOX STARS** in **Design IncrediBowl — Ahmedabad Season 2
 
 Built to the official DIB S2 format: your 15-player Master Squad splits into **3 sub-teams (A / B / C)** of **4 men + 1 woman** each, every sub-team capped at **₹25 Cr** base value (final auction price), with the Captain and two Vice-Captains fixed to separate teams.
 
-- **Teams** — auto-forms three valid, competitively balanced sub-teams (or stacks Team A), enforcing 4M+1W, the ₹25 Cr cap, and the fixed Captain/VC leads. Live validation flags any rule break; in Coach mode, tap A/B/C to move a player.
+- **Teams** — a *living* optimizer. Pick a strategy (**Powerhouse** = one strong team · **Balanced** · **Tiered** strong→light), choose which team to load, and it forms three rule-valid sub-teams (4M+1W, ≤ ₹25 Cr, fixed Captain/VC leads). **Pin** the players you're happy with and re-roll the rest; a live prompt flags when new practice data makes a stronger split possible — one tap to apply. Tap A/B/C to move anyone; a data-confidence counter shows how many bowlers have real numbers yet.
 - **Roster** — player roles (Captain/VC), sub-team, availability, and estimated averages for new bowlers.
 - **Practice** — players log each game (score / strikes / spares); averages update and the sub-team projections re-balance automatically.
 - **Rivals** — league ladder of all 12 brands + a head-to-head comparator.

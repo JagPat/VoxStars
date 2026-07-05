@@ -145,13 +145,22 @@
   <section id="sec-teams" class="on">
     <div class="sec-h"><h2>Sub-Teams</h2><div class="hint" id="teamsHint"></div></div>
     <div class="card tight">
-      <div class="setgrid" style="align-items:flex-end">
-        <div class="fieldset" style="flex:1"><label class="fld">Split strategy</label>
-          <select id="strategy" onchange="changeStrategy(this.value)"><option value="balanced">Balanced (3 even teams)</option><option value="stacked">Stacked (load Team A)</option></select></div>
-        <div><label class="fld">Cap / team</label><div class="pill" style="height:40px;justify-content:center">₹<span id="capVal">25</span> Cr</div></div>
-        <div><label class="fld">&nbsp;</label><button class="btn gold sm" style="height:40px" onclick="autoSplit()">⚙︎ Auto-form</button></div>
+      <div class="setgrid" style="align-items:flex-end;margin-bottom:9px">
+        <div class="fieldset" style="flex:1"><label class="fld">Strategy</label>
+          <select id="strategy" onchange="changeStrategy(this.value)">
+            <option value="powerhouse">Powerhouse (one strong team)</option>
+            <option value="balanced">Balanced (3 even teams)</option>
+            <option value="tiered">Tiered (strong → light)</option>
+          </select></div>
+        <div id="powerWrap"><label class="fld">Power team</label>
+          <select id="powerTeam" onchange="changePowerTeam(this.value)"><option value="A">A · Capt</option><option value="B">B · VC1</option><option value="C">C · VC2</option></select></div>
+      </div>
+      <div class="row" style="gap:9px">
+        <div class="pill" style="height:40px">Cap ₹<span id="capVal">25</span> Cr / team</div>
+        <button class="btn gold sm" style="height:40px;flex:1" onclick="autoSplit()">⚙︎ Auto-form teams</button>
       </div>
     </div>
+    <div id="optBanner"></div>
     <div id="teamValidation"></div>
     <div id="teamsList"></div>
     <p class="note"><b>DIB S2 rules:</b> 3 sub-teams A / B / C of 5 = <b>4 men + 1 woman</b> each, total base value <b>≤ ₹25 Cr</b> per team. Captain (Jagrut) leads A, VC1 (Sandeep) B, VC2 (Siddharth) C — fixed in separate teams. In Coach mode, tap A/B/C on a player to move them; projected totals update as practice games are logged.</p>
@@ -296,7 +305,7 @@ const RIVAL_AVGS={
   "Dynamic Hunters":[126,126,117,115,113,110,90]
 };
 const CACHE="voxstars_cache_v2", UIKEY="voxstars_ui_v2", PINKEY="voxstars_pin_v2";
-const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"balanced",teamSize:5,teamsCount:3};
+const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A",teamSize:5,teamsCount:3};
 const LEADS={A:149,B:171,C:175}; // Captain (Jagrut) → A, VC1 (Sandeep) → B, VC2 (Siddharth) → C
 
 let players=[], settings={...DEFSET};
@@ -305,10 +314,10 @@ let coachPin=localStorage.getItem(PINKEY)||"";
 let online=false, lastSync=0, curTab="teams";
 
 /* ============ MODEL HELPERS ============ */
-function seedPlayers(){ players=ROSTER.map(r=>({...r,games:[],available:true,lockIn:false,lockOut:false,estAvg:null,team:null})); }
+function seedPlayers(){ players=ROSTER.map(r=>({...r,games:[],available:true,lockIn:false,lockOut:false,estAvg:null,team:null,pin:false})); }
 function mergeServer(d){
   const byNo=new Map((d.players||[]).map(p=>[p.no,p]));
-  players=ROSTER.map(r=>{ const s=byNo.get(r.no)||{}; return {...r,games:s.games||[],available:s.available!==false,lockIn:!!s.lockIn,lockOut:!!s.lockOut,estAvg:(s.estAvg??null),team:(s.team??null)}; });
+  players=ROSTER.map(r=>{ const s=byNo.get(r.no)||{}; return {...r,games:s.games||[],available:s.available!==false,lockIn:!!s.lockIn,lockOut:!!s.lockOut,estAvg:(s.estAvg??null),team:(s.team??null),pin:!!s.pin}; });
   if(d.settings) settings={...DEFSET,...d.settings};
   lastSync=d.updatedAt||Date.now();
 }
@@ -335,9 +344,13 @@ function sumAvg(L){ return L.reduce((s,p)=>s+teamAvg(p),0); }
 function isLead(p){ return p && [LEADS.A,LEADS.B,LEADS.C].includes(p.no); }
 function perms3(a){ return [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]].map(ix=>[a[ix[0]],a[ix[1]],a[ix[2]]]); }
 function overflowOf(t,cap){ return ['A','B','C'].reduce((s,k)=>s+Math.max(0,sumBase(t[k])-cap),0); }
+function priOrder(){ const pt=settings.powerTeam||'A'; return [pt,...['A','B','C'].filter(k=>k!==pt)]; }
 function splitScore(t,cap,strategy){
   const of=overflowOf(t,cap), totals=['A','B','C'].map(k=>sumAvg(t[k]));
-  const shaped=(strategy==='stacked') ? -sumAvg(t.A) : (Math.max(...totals)-Math.min(...totals));
+  let shaped;
+  if(strategy==='balanced') shaped=Math.max(...totals)-Math.min(...totals);
+  else if(strategy==='tiered'){ const o=priOrder(); shaped=-(3*sumAvg(t[o[0]])+2*sumAvg(t[o[1]])+1*sumAvg(t[o[2]])); }
+  else shaped=-sumAvg(t[settings.powerTeam||'A']); // powerhouse
   return of*1e6 + shaped;
 }
 function improveSplit(t,cap,strategy){
@@ -346,8 +359,8 @@ function improveSplit(t,cap,strategy){
   while(guard++<400){
     const baseK=splitScore(t,cap,strategy);
     for(const k1 of KS) for(const k2 of KS){ if(k1>=k2)continue;
-      for(let i=0;i<t[k1].length;i++){ const p1=t[k1][i]; if(p1.g!=='M'||isLead(p1))continue;
-        for(let j=0;j<t[k2].length;j++){ const p2=t[k2][j]; if(p2.g!=='M'||isLead(p2))continue;
+      for(let i=0;i<t[k1].length;i++){ const p1=t[k1][i]; if(p1.g!=='M'||isLead(p1)||p1.pin)continue;
+        for(let j=0;j<t[k2].length;j++){ const p2=t[k2][j]; if(p2.g!=='M'||isLead(p2)||p2.pin)continue;
           t[k1][i]=p2; t[k2][j]=p1;                       // try swap
           if(splitScore(t,cap,strategy)<baseK-1e-9) continue restart;  // keep it, restart with fresh captures
           t[k1][i]=p1; t[k2][j]=p2;                       // else revert
@@ -356,27 +369,37 @@ function improveSplit(t,cap,strategy){
   }
   return t;
 }
+function permMaps(items,keys){ const res=[]; (function go(i,used,acc){ if(i===items.length){res.push(acc.slice());return;} for(let j=0;j<keys.length;j++){ if(used[j])continue; used[j]=1; acc.push([items[i],keys[j]]); go(i+1,used,acc); acc.pop(); used[j]=0; } })(0,[],[]); return res.length?res:[[]]; }
+function singleMap(items,keys){ return items.map((p,i)=>[p,keys[i%Math.max(1,keys.length)]]); }
 function buildTeams(strategy){
-  strategy=strategy||settings.splitStrategy||'balanced';
+  strategy=strategy||settings.splitStrategy||'powerhouse';
   const cap=settings.capCr||25, KS=['A','B','C'];
-  const lead={A:P(LEADS.A),B:P(LEADS.B),C:P(LEADS.C)};
-  const females=players.filter(p=>p.g==='F');
-  const males=players.filter(p=>p.g==='M'&&!isLead(p)).sort((a,b)=>teamAvg(b)-teamAvg(a));
+  const base={A:[P(LEADS.A)],B:[P(LEADS.B)],C:[P(LEADS.C)]};
+  const placed=new Set([LEADS.A,LEADS.B,LEADS.C]);
+  // honour player pins — keep locked players in their chosen sub-team, optimise the rest around them
+  players.forEach(p=>{ if(p.pin&&!placed.has(p.no)&&KS.includes(p.team)&&base[p.team].length<5){ base[p.team].push(p); placed.add(p.no); } });
+  const femLeft=players.filter(p=>p.g==='F'&&!placed.has(p.no));
+  const maleLeft=players.filter(p=>p.g==='M'&&!placed.has(p.no)).sort((a,b)=>teamAvg(b)-teamAvg(a));
+  const femNeed=KS.filter(k=>base[k].filter(p=>p.g==='F').length===0);
+  const order=priOrder(), prefRank=k=>(strategy==='balanced'?0:order.indexOf(k));
+  const femMaps=(femLeft.length===femNeed.length)?permMaps(femLeft,femNeed):[singleMap(femLeft,femNeed)];
   let best=null;
-  for(const fp of perms3(females)){
-    const t={A:[lead.A,fp[0]],B:[lead.B,fp[1]],C:[lead.C,fp[2]]};
-    for(const m of males){
+  for(const fmap of femMaps){
+    const t={A:[...base.A],B:[...base.B],C:[...base.C]};
+    fmap.forEach(([p,k])=>{ if(k&&t[k].length<5) t[k].push(p); });
+    for(const m of maleLeft){
       let cand=KS.filter(k=>t[k].length<5 && sumBase(t[k])+m.pt<=cap);
       if(!cand.length) cand=KS.filter(k=>t[k].length<5);
-      const pick=(strategy==='stacked') ? cand.sort((x,y)=>KS.indexOf(x)-KS.indexOf(y))[0]
-                                        : cand.sort((x,y)=>sumAvg(t[x])-sumAvg(t[y]))[0];
+      if(!cand.length) break;
+      const pick=(strategy==='balanced') ? cand.sort((x,y)=>sumAvg(t[x])-sumAvg(t[y]))[0]
+                                         : cand.sort((x,y)=>prefRank(x)-prefRank(y)||sumBase(t[x])-sumBase(t[y]))[0];
       t[pick].push(m);
     }
     improveSplit(t,cap,strategy);
     const k=splitScore(t,cap,strategy);
     if(!best||k<best.k) best={t:{A:[...t.A],B:[...t.B],C:[...t.C]},k};
   }
-  return best.t;
+  return best?best.t:base;
 }
 function currentTeams(){ const t={A:[],B:[],C:[],U:[]}; players.forEach(p=>{ (['A','B','C'].includes(p.team)?t[p.team]:t.U).push(p); }); return t; }
 function validateTeams(t){
@@ -412,16 +435,17 @@ function teamCard(k,L){
   const over=base>cap, comp=(m===4&&f===1&&L.length===5);
   const leadName=k==='A'?'Captain':(k==='B'?'Vice-Capt 1':'Vice-Capt 2');
   const coach=ui.mode==='coach';
+  const isPower=(settings.splitStrategy!=='balanced'&&(settings.powerTeam||'A')===k);
   const rows=[...L].sort((a,b)=>teamAvg(b)-teamAvg(a)).map(p=>{
     const e=eff(p),fem=p.g==='F',av=e.avg==null?'—':e.avg;
-    const moves=(coach&&!isLead(p))?'<div class="tmove">'+['A','B','C'].map(x=>`<button class="tmb ${p.team===x?'on':''}" onclick="moveTo(${p.no},'${x}')">${x}</button>`).join('')+'</div>':'';
+    const ctrl=(coach&&!isLead(p))?'<div class="tmove"><button class="tmb '+(p.pin?'on':'')+'" title="Lock to this team" onclick="togglePin('+p.no+')">📌</button>'+['A','B','C'].map(x=>`<button class="tmb ${p.team===x?'on':''}" onclick="moveTo(${p.no},'${x}')">${x}</button>`).join('')+'</div>':'';
     return `<div class="plr"><div class="avatar ${fem?'f':''}">${initials(p.name)}</div>
-      <div class="grow"><div class="pname" style="font-size:13px">${p.name} ${roleTag(p)} ${fem?'<span class="tag f">W</span>':''} ${srcTag(e)}</div>
+      <div class="grow"><div class="pname" style="font-size:13px">${p.name}${p.pin?' 📌':''} ${roleTag(p)} ${fem?'<span class="tag f">W</span>':''} ${srcTag(e)}</div>
         <div class="pmeta">₹${p.pt} Cr · ${e.n?e.n+' gm avg':'proj'}</div></div>
-      <div class="avgbox"><div class="a mono" style="font-size:17px">${av}</div></div>${moves}</div>`;
+      <div class="avgbox"><div class="a mono" style="font-size:17px">${av}</div></div>${ctrl}</div>`;
   }).join('');
-  return `<div class="card">
-    <div class="row" style="margin-bottom:4px"><h3 style="font-size:14px" class="gold">TEAM ${k} <span class="muted" style="font-weight:600;font-size:11px">· ${leadName}</span></h3>
+  return `<div class="card" ${isPower?'style="border-color:rgba(245,179,1,.5)"':''}>
+    <div class="row" style="margin-bottom:4px"><h3 style="font-size:14px" class="gold">TEAM ${k} <span class="muted" style="font-weight:600;font-size:11px">· ${leadName}</span> ${isPower?'<span class="tag lock">POWER</span>':''}</h3>
       <div style="margin-left:auto;text-align:right"><div class="mono gold" style="font-weight:800;font-size:18px">${avg}</div><div class="s muted" style="font-size:10px">proj total</div></div></div>
     <div class="capbar"><div class="capfill ${over?'over':''}" style="width:${Math.min(100,base/cap*100)}%"></div></div>
     <div class="row" style="justify-content:space-between;margin:5px 0 6px">
@@ -429,16 +453,39 @@ function teamCard(k,L){
       <span class="pmeta" style="${comp?'':'color:var(--bad);font-weight:700'}">${m}M + ${f}W ${comp?'✓':'⚠︎'}</span></div>
     ${rows}</div>`;
 }
+function optSuggestion(cur){
+  const strat=settings.splitStrategy, cap=settings.capCr||25, ot=buildTeams(strat);
+  const cs=splitScore(cur,cap,strat), os=splitScore(ot,cap,strat);
+  if(os < cs-0.5){
+    let msg;
+    if(strat==='balanced'){ const sp=x=>Math.round(Math.max(...['A','B','C'].map(k=>sumAvg(x[k])))-Math.min(...['A','B','C'].map(k=>sumAvg(x[k])))); msg='tighter balance ('+sp(cur)+'→'+sp(ot)+' spread)'; }
+    else { const pt=settings.powerTeam||'A'; const d=Math.round(sumAvg(ot[pt])-sumAvg(cur[pt])); msg=(d>0?('+'+d+' pins on Team '+pt):'a stronger split'); }
+    return {better:true,msg};
+  }
+  return {better:false};
+}
 function renderTeams(){
-  $('capVal').textContent=settings.capCr; if($('strategy'))$('strategy').value=settings.splitStrategy;
+  $('capVal').textContent=settings.capCr;
+  if($('strategy'))$('strategy').value=settings.splitStrategy;
+  if($('powerTeam'))$('powerTeam').value=settings.powerTeam||'A';
+  if($('powerWrap'))$('powerWrap').style.display=(settings.splitStrategy==='balanced')?'none':'block';
+  const rated=players.filter(p=>['league','both','practice'].includes(eff(p).src)).length;
   const t=currentTeams();
   const assigned=t.A.length+t.B.length+t.C.length;
-  if(!assigned){ $('teamValidation').innerHTML='<div class="vbanner warn">No sub-teams yet — tap <b>Auto-form</b> to split your 15 into A / B / C.</div>'; $('teamsList').innerHTML=''; $('teamsHint').textContent=''; return; }
+  if(!assigned){
+    $('optBanner').innerHTML='';
+    $('teamValidation').innerHTML='<div class="vbanner warn">No sub-teams yet — pick a strategy and tap <b>Auto-form teams</b>. '+rated+'/15 bowlers have real data so far.</div>';
+    $('teamsList').innerHTML=''; $('teamsHint').textContent=rated+'/15 rated'; return;
+  }
   const issues=validateTeams(t);
   $('teamValidation').innerHTML = issues.length
     ? '<div class="vbanner bad"><b>⚠︎ '+issues.length+' issue'+(issues.length>1?'s':'')+' to fix:</b><br>'+issues.join('<br>')+'</div>'
-    : '<div class="vbanner ok">✓ All 3 sub-teams valid — 4M+1W and within the ₹'+settings.capCr+' Cr cap.</div>';
-  $('teamsHint').textContent = issues.length? issues.length+' to fix' : 'all valid';
+    : '<div class="vbanner ok">✓ Valid split — every team is 4M+1W within ₹'+settings.capCr+' Cr. '+rated+'/15 bowlers rated.</div>';
+  const sug=optSuggestion(t);
+  $('optBanner').innerHTML = (ui.mode==='coach' && sug.better)
+    ? '<div class="vbanner warn" style="display:flex;align-items:center;gap:10px"><div class="grow">↑ A stronger split is available — <b>'+sug.msg+'</b>.</div><button class="btn tiny gold" onclick="autoSplit()">Apply</button></div>'
+    : (issues.length?'':'<div class="vbanner ok">✓ Optimal for your current strategy &amp; the data so far.</div>');
+  $('teamsHint').textContent = issues.length? issues.length+' to fix' : (rated+'/15 rated');
   const unassigned = t.U.length ? '<div class="card tight"><h3 class="muted" style="font-size:12px;letter-spacing:.5px">UNASSIGNED</h3>'+t.U.map(p=>`<div class="plr"><div class="avatar ${p.g==='F'?'f':''}">${initials(p.name)}</div><div class="grow"><div class="pname" style="font-size:13px">${p.name} ${roleTag(p)}</div><div class="pmeta">₹${p.pt} Cr</div></div>${ui.mode==='coach'?'<div class="tmove">'+['A','B','C'].map(x=>`<button class="tmb" onclick="moveTo(${p.no},'${x}')">${x}</button>`).join('')+'</div>':''}</div>`).join('')+'</div>' : '';
   $('teamsList').innerHTML=['A','B','C'].map(k=>teamCard(k,t[k])).join('')+unassigned;
 }
@@ -556,7 +603,9 @@ function autoSplit(){
   coachAction('POST','/api/teams',{assignments},()=>{ players.forEach(p=>{ p.team=assignments[p.no]||null; }); renderTeams(); toast('Sub-teams formed'); });
 }
 function moveTo(no,team){ coachAction('PUT','/api/players/'+no,{team},()=>{ P(no).team=team; renderTeams(); }); }
-function changeStrategy(v){ coachAction('PUT','/api/settings',{splitStrategy:v},()=>{ settings.splitStrategy=v; toast('Strategy set — tap Auto-form'); }); }
+function togglePin(no){ const p=P(no); coachAction('PUT','/api/players/'+no,{pin:!p.pin},()=>{ p.pin=!p.pin; renderTeams(); toast(p.pin?'Locked to Team '+(p.team||'?'):'Unlocked'); }); }
+function changeStrategy(v){ coachAction('PUT','/api/settings',{splitStrategy:v},()=>{ settings.splitStrategy=v; renderTeams(); toast('Strategy: '+v); }); }
+function changePowerTeam(v){ coachAction('PUT','/api/settings',{powerTeam:v},()=>{ settings.powerTeam=v; renderTeams(); }); }
 function changeDefAvg(v){ const n=+v||100; coachAction('PUT','/api/settings',{defaultAvg:n},()=>{settings.defaultAvg=n;renderAll();}); }
 function toggleExpand(no){const el=$('exp-'+no);document.querySelectorAll('.expand').forEach(e=>{if(e!==el)e.classList.remove('on')});el.classList.toggle('on');}
 function setFlag(no,flag){
