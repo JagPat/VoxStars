@@ -23,16 +23,16 @@ Data lives on a small server + JSON store on a persistent volume, so everyone se
 
 **VOX STARS leads:** Captain Ar. Jagrut Patel (Team A), VC1 Sandeep Sisodiya (Team B), VC2 Siddharth Bhatt (Team C). Squad base value totals 60 Cr.
 
-> **Login note:** v1 uses a lightweight identity — you pick your name once and it's remembered on the device, with an optional local PIN; the coach unlocks the cockpit with the coach PIN. Real per-player invite links + PINs are the planned next step.
+> **Sign-in (real per-player auth):** each player gets a personal **invite link** from the coach (Squad → Invite links). Opening it claims your identity and sets a 4-digit PIN; after that you sign in with **name + PIN** on any device. The server **enforces** it — a player can only ever log *their own* games (others are rejected). The **Captain and Vice-Captains** get the coach cockpit straight from their own login, and the **coach PIN** still works as a backup unlock.
 
 ---
 
 ## How the team uses it
 
 1. Open the deployed URL on your phone → **Add to Home Screen** (works like an app).
-2. **Sign in as yourself** — pick your name once; you land straight on **Me** every time after.
-3. **Play & log:** after each game tap **＋ Log a game** (quick score, or tap the pins frame-by-frame). Your ring and plan update instantly.
-4. **The captain** opens **Profile → Coach / Captain access**, enters the coach PIN, and gets the Squad board, Session logger and Optimizer.
+2. **Sign in** — open your personal **invite link** (sets your PIN) the first time; after that just **name + PIN** on any phone. You land straight on **Me**.
+3. **Play & log:** after each game tap **＋ Log a game** (quick score, or tap the pins frame-by-frame). Your ring and plan update instantly — and only *you* can log *your* games.
+4. **The captain / vice-captains** get the cockpit from their own login (**Profile → Enter coach cockpit**; coach PIN works as a backup). Share each player's link from **Squad → Invite links**.
 
 ---
 

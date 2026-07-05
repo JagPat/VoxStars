@@ -63,10 +63,10 @@ const ROSTER=[
 const LEADS={A:149,B:171,C:175};
 const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Verantes Elites":[145,144,139,126,115,100,94,64,59],"Bharat Blazers":[172,132,120,120,116,93,84],"Durlax Warriors":[150,134,127,120,118,105,102,95],"TWF Tornados":[139,129,124,124,123,120,115,102,92,75],"Koil Krushers":[138,131,124,120,118,115,115,104,75],"Eff.co Wreckers":[130,128,127,122,120,106,90],"Fima Strikers":[140,138,133,126,90,86],"CXO Superboss":[132,131,126,125,111,85,73],"All About Living":[142,127,122,113,112,110],"Dynamic Hunters":[126,126,117,115,113,110,90]};
 const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A",teamSize:5,teamsCount:3};
-const CK="vox_v3_cache",UK="vox_v3_ui",PK="vox_v3_pin",MEK="vox_v3_me";
+const CK="vox_v3_cache",UK="vox_v3_ui",PK="vox_v3_pin",MEK="vox_v3_me",SK="vox_v3_session";
 
 let players=[], settings={...DEFSET}, online=false, lastSync=0;
-let ui={me:null,mode:"player"};
+let ui={me:null,mode:"player",isCoach:false};
 let coachPin=localStorage.getItem(PK)||"";
 let S={ screen:"login", loginStep:"pick", pickSel:null,
   ptab:"me", ctab:"squad", sheet:null, scorer:"quick",
@@ -178,12 +178,12 @@ function avgTeamStrikesPerGame(){let tot=0,gm=0;players.forEach(p=>{const ps=pst
 /* ============ SYNC / API ============ */
 function setOnline(v){online=v}
 async function apiGet(path){const r=await fetch(path);if(!r.ok)throw r;return r.json()}
-async function apiSend(m,path,body,coach){const h={'Content-Type':'application/json'};if(coach)h['x-coach-pin']=coachPin;
+async function apiSend(m,path,body){const h={'Content-Type':'application/json'};const s=localStorage.getItem(SK);if(s)h['x-session']=s;if(coachPin)h['x-coach-pin']=coachPin;
   const r=await fetch(path,{method:m,headers:h,body:body?JSON.stringify(body):undefined});
-  if(r.status===401){const e=new Error('coach');e.coach=true;throw e}if(!r.ok)throw r;return r.json()}
+  if(r.status===401){const e=new Error('auth');e.auth=true;throw e}if(r.status===403){const e=new Error('forbidden');e.forbidden=true;throw e}if(!r.ok)throw r;return r.json()}
 async function pull(){const d=await apiGet('/api/state');merge(d);setOnline(true);cacheSave()}
-async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body,true);setOnline(true);ok&&ok(r);cacheSave()}
-  catch(e){if(e&&e.coach){toast("Coach PIN needed","Enter your captain PIN");openCoachPin()}else{setOnline(false);toast("No server","Open your Coolify URL / localhost:3000 to save")}}}
+async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body);setOnline(true);ok&&ok(r);cacheSave()}
+  catch(e){if(e&&e.auth){toast("Coach access needed","Unlock the cockpit first");openCoachPin()}else if(e&&e.forbidden){toast("Not allowed","That isn't yours to change")}else{setOnline(false);toast("No server","Open your Coolify URL / localhost:3000 to save")}}}
 
 /* ============ TOAST ============ */
 function toast(title,body){S.toast={title,body};render();clearTimeout(_tt);_tt=setTimeout(()=>{S.toast=null;render()},2600)}
@@ -201,6 +201,7 @@ function render(){const root=$('#app');const anim=S._anim?'up':'';
     ${!isCoach&&S.ptab==='me'&&!S.sheet?fabHTML():''}
     ${isCoach?coachNavHTML():playerNavHTML()}
     ${S.sheet==='log'?logSheetHTML():''}
+    ${S.sheet==='invites'?invitesSheetHTML():''}
     ${S.toast?toastHTML():''}`;
   S._anim=false;wire();
 }
@@ -210,35 +211,40 @@ function statusHTML(){return `<div style="height:44px;flex:0 0 auto;background:v
   <span class="num" style="font-size:12px;font-weight:600;letter-spacing:1px">5G ▪ 84%</span></div>`}
 
 /* ============ LOGIN ============ */
+function loginShell(inner){return `<div style="flex:1;background:radial-gradient(120% 80% at 50% 0%,#1d4368,#14304c 55%,#0e2338);color:#fff;display:flex;flex-direction:column;padding:60px 30px 34px" class="up">${inner}</div>`}
+const vLogo=`<div class="num" style="width:56px;height:56px;border-radius:16px;background:#fff;color:#14304c;font-weight:700;font-size:28px;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 3px var(--gold)">V</div>`;
+const pinBox=id=>`<input id="${id}" inputmode="numeric" maxlength="4" placeholder="• • • •" style="width:100%;margin-top:8px;text-align:center;letter-spacing:16px;font-size:26px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:14px;padding:14px 0">`;
 function loginHTML(){
-  if(S.loginStep==='pick'){
-    const opts=players.map(p=>`<option value="${p.no}" ${S.pickSel==p.no?'selected':''}>${esc(p.name)} · ${esc(p.firm)}</option>`).join('');
-    return `<div style="flex:1;background:radial-gradient(120% 80% at 50% 0%,#1d4368,#14304c 55%,#0e2338);color:#fff;display:flex;flex-direction:column;padding:64px 30px 34px" class="up">
-      <div class="num" style="width:60px;height:60px;border-radius:18px;background:#fff;color:#14304c;font-weight:700;font-size:30px;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 3px var(--gold)">V</div>
-      <div style="font-family:'Space Grotesk';font-size:26px;font-weight:700;margin-top:26px;line-height:1.15">Welcome to<br>VOX STARS</div>
-      <div style="opacity:.62;font-size:14px;margin-top:8px;line-height:1.5">Design IncrediBowl · Ahmedabad S2. Sign in as yourself — remembered on this phone, so you only see your own games.</div>
-      <div style="margin-top:32px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:18px">
-        <div class="lbl" style="color:#fff;opacity:.55">Who are you?</div>
-        <select id="pickWho" style="width:100%;margin-top:10px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:12px;padding:13px;font-size:15px">${opts}</select>
-      </div>
-      <button class="prim" style="margin-top:20px" onclick="claim()">This is me — continue</button>
-      <div style="text-align:center;opacity:.45;font-size:11.5px;margin-top:16px">Real per-player invite links are coming next.</div>
-    </div>`}
-  // confirm / pin (optional local lock)
-  const me=P(S.pickSel)||players[0];
-  return `<div style="flex:1;background:radial-gradient(120% 80% at 50% 0%,#1d4368,#14304c 55%,#0e2338);color:#fff;display:flex;flex-direction:column;padding:64px 30px 34px" class="up">
-    <div class="lbl" style="color:#fff;opacity:.5">Step 2 of 2 · optional</div>
-    <div style="font-family:'Space Grotesk';font-size:24px;font-weight:700;margin-top:12px">Set a 4-digit PIN</div>
-    <div style="opacity:.6;font-size:13.5px;margin-top:8px;line-height:1.5">So only you can open your games on this phone. Leave blank to skip.</div>
-    <div style="display:flex;align-items:center;gap:12px;margin-top:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:16px;padding:16px">
-      <div class="num" style="width:46px;height:46px;border-radius:50%;background:${avatarBg(me.g)};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px">${initials(me.name)}</div>
-      <div><div style="font-weight:700;font-size:16px">${esc(me.name)}</div><div style="opacity:.6;font-size:12px">${esc(me.firm)}</div></div>
-    </div>
-    <input id="pinIn" inputmode="numeric" maxlength="4" placeholder="• • • •" style="width:100%;margin-top:16px;text-align:center;letter-spacing:16px;font-size:26px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:14px;padding:14px 0">
-    <button class="prim" style="margin-top:20px" onclick="enterApp()">Enter cockpit</button>
-    <div style="text-align:center;opacity:.45;font-size:11.5px;margin-top:14px">Next time on this phone you land straight on your games.</div></div>`}
-function claim(){const sel=$('#pickWho');if(sel)S.pickSel=+sel.value;S.loginStep='confirm';render()}
-function enterApp(){const pin=$('#pinIn')?$('#pinIn').value.trim():'';ui.me=S.pickSel||players[0].no;ui.mode='player';localStorage.setItem(MEK,ui.me);if(pin)localStorage.setItem('vox_v3_meplayerpin',pin);saveUI();S.screen='app';S.ptab='me';S._anim=true;render()}
+  if(S.loginStep==='claim'){const me=P(S.claimNo)||players[0];
+    return loginShell(`${vLogo}
+      <div style="font-family:'Space Grotesk';font-size:24px;font-weight:700;margin-top:22px;line-height:1.15">You're invited to<br>VOX STARS</div>
+      <div style="opacity:.62;font-size:13.5px;margin-top:8px;line-height:1.5">Design IncrediBowl · Ahmedabad S2. This personal link signs you in as yourself.</div>
+      <div style="margin-top:22px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:16px">
+        <div class="lbl" style="color:#fff;opacity:.55">This is you</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:10px"><div class="num" style="width:46px;height:46px;border-radius:50%;background:${avatarBg(me.g)};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px">${initials(me.name)}</div><div><div style="font-weight:700;font-size:16px">${esc(me.name)}</div><div style="opacity:.6;font-size:12px">${esc(me.firm)}${me.team?' · Sub-team '+me.team:''}</div></div></div></div>
+      <div class="lbl" style="color:#fff;opacity:.55;margin-top:18px">Set a 4-digit PIN — lets you sign in on any phone</div>
+      ${pinBox('pinIn')}
+      <button class="prim" style="margin-top:18px" onclick="doClaim()">This is me — enter</button>
+      <div style="text-align:center;opacity:.45;font-size:11.5px;margin-top:14px">Not ${esc(shortName(me.name))}? Ask your captain for your own link.</div>`);}
+  const opts=players.map(p=>`<option value="${p.no}" ${S.pickSel==p.no?'selected':''}>${esc(shortName(p.name))} · ${esc(p.firm)}</option>`).join('');
+  return loginShell(`${vLogo}
+    <div style="font-family:'Space Grotesk';font-size:25px;font-weight:700;margin-top:22px;line-height:1.15">Welcome to<br>VOX STARS</div>
+    <div style="opacity:.62;font-size:13.5px;margin-top:8px;line-height:1.5">Sign in with your name + PIN. First time? Open the personal invite link your captain sent — it sets your PIN.</div>
+    <div style="margin-top:22px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:16px">
+      <div class="lbl" style="color:#fff;opacity:.55">Your name</div>
+      <select id="signName" style="width:100%;margin-top:8px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:12px;padding:13px;font-size:15px">${opts}</select>
+      <div class="lbl" style="color:#fff;opacity:.55;margin-top:14px">PIN</div>
+      ${pinBox('signPin')}</div>
+    <button class="prim" style="margin-top:18px" onclick="doLogin()">Sign in</button>
+    <div style="text-align:center;margin-top:14px"><button onclick="openCoachPin()" style="background:none;border:none;color:var(--gold2);font-size:12px;font-weight:700;cursor:pointer">I'm the captain / coach →</button></div>
+    <div style="text-align:center;opacity:.45;font-size:11px;margin-top:8px">Only your own games are yours to edit.</div>`);}
+async function doClaim(){const pin=$('#pinIn')?$('#pinIn').value.trim():'';
+  try{const r=await apiSend('POST','/api/claim',{token:S.claimToken,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';localStorage.setItem(MEK,r.no);saveUI();try{history.replaceState(null,'',location.pathname)}catch(e){}S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
+  catch(e){toast("Couldn't sign in",e&&e.auth?"Invite link invalid — ask your captain":"No server — try again");}}
+async function doLogin(){const no=+($('#signName')?$('#signName').value:0);const pin=$('#signPin')?$('#signPin').value.trim():'';
+  if(!/^\d{4}$/.test(pin)){toast("Enter your 4-digit PIN","");return;}
+  try{const r=await apiSend('POST','/api/login',{no,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';localStorage.setItem(MEK,r.no);saveUI();S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
+  catch(e){toast(e&&e.auth?"Wrong PIN":"No server",e&&e.auth?"First time? Use your invite link to set a PIN.":"Try again");}}
 
 /* ============ HEADERS ============ */
 function playerHeaderHTML(){const m=disp(P(ui.me));return `<div style="flex:0 0 auto;background:var(--navy);color:#fff;padding:6px 20px 16px">
@@ -329,7 +335,7 @@ function profileViewHTML(){const m=disp(P(ui.me));return `<div style="padding:18
       <div style="display:flex;gap:8px;margin-top:8px"><input id="tgtIn" type="number" inputmode="numeric" value="${m.target}" style="flex:1;background:var(--app);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px"><button class="prim" style="width:auto;padding:0 18px;border-radius:12px" onclick="saveMyTarget()">Set</button></div>
       <div style="font-size:11px;color:var(--muted);margin-top:8px">Your coach can set this too. Chase it every game.</div></div>
     <button onclick="toggleOffline()" style="width:100%;margin-top:12px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid ${S.offline?'#caa24a':'var(--line)'};background:${S.offline?'#fdf6e3':'#fff'};color:${S.offline?'#8a5a00':'var(--muted2)'}">${S.offline?'◐ Offline mode is ON — tap to go live':'● Online — tap to simulate offline'}</button>
-    <button onclick="openCoachPin()" style="width:100%;margin-top:10px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff">Coach / Captain access →</button>
+    ${ui.isCoach?`<button onclick="enterCoachDirect()" style="width:100%;margin-top:10px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff">Enter coach cockpit →</button>`:`<button onclick="openCoachPin()" style="width:100%;margin-top:10px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff">Coach / Captain access →</button>`}
     <button onclick="signOut()" style="width:100%;margin-top:10px;border-radius:14px;padding:13px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--muted2)">Sign out</button></div>`}
 
 /* ============ COACH BODY ============ */
@@ -351,6 +357,7 @@ function squadViewHTML(){const avail=players.filter(p=>p.available!==false).leng
       <div class="card" style="flex:1;padding:12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--navy)">${avail}<span style="font-size:12px;color:#c3ccd6">/15</span></div><div style="font-size:10px;color:var(--muted);font-weight:600">available</div></div>
       <div class="card" style="flex:1;padding:12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--bad)">${needs}</div><div style="font-size:10px;color:var(--muted);font-weight:600">need data</div></div>
       <div class="card" style="flex:1;padding:12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--good)">▲${impr}</div><div style="font-size:10px;color:var(--muted);font-weight:600">improving</div></div></div>
+    <button onclick="openInvites()" style="width:100%;margin-top:8px;border-radius:12px;padding:11px;font-size:12.5px;font-weight:700;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--navy)">🔗 Invite links — sign your players in</button>
     <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Squad readiness</div><div style="font-size:10px;color:#a9b8c6;margin-left:auto">avg · trend · confidence</div></div>${cards}</div>`}
 function sessionViewHTML(){const c=currentTeams();let list=c[S.session.team];if(c.A.length+c.B.length+c.C.length===0)list=players;
   const sIdx=S.session.idx,done=sIdx>=list.length,cur=list[sIdx]||null;
@@ -445,11 +452,19 @@ function ordinalSuf(n){const s=["th","st","nd","rd"],v=n%100;return s[(v-20)%10]
 /* ============ ACTIONS ============ */
 function goP(t){S.ptab=t;S._anim=true;render()}
 function goC(t){S.ctab=t;S._anim=true;render()}
-function exitCoach(){ui.mode='player';S.ptab='me';saveUI();S._anim=true;render()}
-function signOut(){localStorage.removeItem(MEK);ui.me=null;S.screen='login';S.loginStep='pick';S.pickSel=players[0].no;render()}
+function exitCoach(){if(ui.me==null){toast("Sign in as a player","Use your invite link or name + PIN to see your own games");return}ui.mode='player';S.ptab='me';saveUI();S._anim=true;render()}
+function signOut(){localStorage.removeItem(SK);localStorage.removeItem(MEK);localStorage.removeItem(PK);coachPin='';ui.me=null;ui.isCoach=false;ui.mode='player';S.screen='login';S.loginStep='signin';S.pickSel=players[0].no;render()}
 function toggleOffline(){S.offline=!S.offline;render()}
 function openLog(){S.logTarget=ui.me;S.sheet='log';S.scorer='quick';S.entry={score:0,strikes:0,spares:0};S.rolls=[];render()}
 function closeSheet(){S.sheet=null;render()}
+async function openInvites(){try{const r=await apiSend('GET','/api/invites');S.invites=r.players;S.sheet='invites';render()}catch(e){toast("Coach only","Unlock the cockpit first")}}
+function invitesSheetHTML(){const origin=location.origin;const rows=(S.invites||[]).map(x=>{const p=P(x.no);const link=origin+'/?join='+x.token;return `<div style="display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line)"><div class="num" style="width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">${initials(p.name)}</div><div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))} ${x.claimed?'<span style="font-size:9px;color:var(--good);font-weight:700">✓ joined</span>':'<span style="font-size:9px;color:var(--muted)">not yet</span>'}</div><div style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(link)}</div></div><button onclick="copyInvite('${link}')" style="flex:0 0 auto;background:var(--navy);color:#fff;border:none;border-radius:9px;padding:8px 11px;font-size:11px;font-weight:700;cursor:pointer">Copy</button></div>`}).join('');
+  return `<div onclick="closeSheet()" style="position:absolute;inset:0;z-index:60;background:rgba(8,18,32,.45)"></div>
+  <div class="vscroll" style="position:absolute;left:0;right:0;bottom:0;z-index:61;background:var(--app);border-radius:26px 26px 0 0;max-height:88%;overflow-y:auto;animation:vsSheet .3s cubic-bezier(.32,.72,.33,1) both;padding:14px 20px 26px">
+    <div style="width:40px;height:5px;border-radius:3px;background:#d3dde6;margin:0 auto 12px"></div>
+    <div style="display:flex;align-items:center;gap:10px"><div><div style="font-size:18px;font-weight:700;color:var(--navy)">Invite links</div><div style="font-size:11.5px;color:var(--muted)">Send each player their own link (WhatsApp). It signs them in as themselves &amp; sets their PIN.</div></div><button onclick="closeSheet()" style="margin-left:auto;width:34px;height:34px;border-radius:50%;border:none;background:#e7edf2;color:var(--muted2);font-size:17px;cursor:pointer">✕</button></div>
+    <div class="card" style="padding:6px 14px;margin-top:14px">${rows}</div></div>`}
+function copyInvite(link){if(navigator.clipboard){navigator.clipboard.writeText(link).then(()=>toast("Link copied","Share it with the player"),()=>toast("Copy failed",""))}else{toast("Copy not supported","")}}
 function setScorer(x){S.scorer=x;render()}
 function adj(d){S.entry.score=Math.max(0,Math.min(300,S.entry.score+d));render()}
 function adjS(k,d){S.entry[k]=Math.max(0,S.entry[k]+d);render()}
@@ -461,14 +476,15 @@ async function saveLog(){const e=S.entry;if(!(e.score>0)){toast("Enter a score",
   const wasBest=disp(p).best;
   try{const{game}=await apiSend('POST','/api/games',body,false);S._prevMe={no,game};p.games.push(game);cacheSave();setOnline(true);
     S.sheet=null;const nb=e.score>=wasBest;toast(nb?'New personal best! 🎳':'Game logged',e.score+' pins · avg now '+disp(p).avg);render()}
-  catch(err){setOnline(false);S.sheet=null;toast("Saved offline","Reconnect to sync — open your Coolify URL");render()}}
+  catch(err){if(err&&err.auth){S.sheet=null;toast("Session expired","Sign in again to log");render()}else if(err&&err.forbidden){S.sheet=null;toast("Not your game","You can only log your own");render()}else{setOnline(false);S.sheet=null;toast("Saved offline","Reconnect to sync — open your Coolify URL");render()}}}
 function undoLog(){if(S._prevMe){const p=P(S._prevMe.no);if(p&&p.games.length)p.games.pop();S._prevMe=null;cacheSave();clearTimeout(_tt);S.toast=null;render()}}
 async function saveMyTarget(){const v=+($('#tgtIn')?$('#tgtIn').value:0)||null;const p=P(ui.me);
   try{await apiSend('POST','/api/mytarget',{no:ui.me,target:v},false);p.target=v;cacheSave();toast("Target set","Chasing "+(v||150)+" now")}
   catch(e){setOnline(false);toast("No server","Reconnect to save your target")}}
 /* coach */
-function openCoachPin(){const pin=prompt("Coach / Captain PIN");if(pin==null)return;coachPin=pin.trim();
-  apiSend('POST','/api/coach/verify',{pin:coachPin},false).then(r=>{if(r.ok){localStorage.setItem(PK,coachPin);ui.mode='coach';S.ctab='squad';saveUI();S._anim=true;render();toast("Coach mode","Full access unlocked")}else toast("Wrong PIN","Ask for the captain PIN")}).catch(()=>{setOnline(false);toast("No server","Can't verify PIN offline")})}
+function enterCoachDirect(){ui.mode='coach';S.screen='app';S.ctab='squad';saveUI();S._anim=true;render();}
+function openCoachPin(){const pin=prompt("Coach / Captain PIN");if(pin==null)return;const pn=pin.trim();const prev=coachPin;coachPin=pn;
+  apiSend('POST','/api/coach/verify',{pin:pn}).then(r=>{if(r.ok){localStorage.setItem(PK,pn);ui.mode='coach';ui.isCoach=true;S.screen='app';S.ctab='squad';saveUI();S._anim=true;render();toast("Coach mode","Full access unlocked")}else{coachPin=prev;toast("Wrong PIN","Ask for the captain PIN")}}).catch(()=>{coachPin=prev;setOnline(false);toast("No server","Can't verify PIN offline")})}
 function toggleAvail(no){const p=P(no);const nv=!(p.available!==false);coachAction('PUT','/api/players/'+no,{available:nv},()=>{p.available=nv;render()})}
 function nudge(no){toast("Reminder sent","Nudged "+shortName(P(no).name).split(' ')[0]+" to log their games")}
 function logForThem(no){S.logTarget=no;S.sheet='log';S.scorer='quick';S.entry={score:0,strikes:0,spares:0};S.rolls=[];render()}
@@ -492,13 +508,14 @@ async function refresh(){try{await pull();setOnline(true);render()}catch(e){setO
 function wire(){}
 
 /* ============ BOOT ============ */
-async function boot(){loadUI();const savedMe=+localStorage.getItem(MEK)||null;if(savedMe&&ROSTER.some(r=>r.no===savedMe))ui.me=savedMe;
-  seed();try{await pull()}catch(e){setOnline(false);cacheLoad()}
-  S.strategy=settings.splitStrategy||'powerhouse';S.applied=settings.splitStrategy||'powerhouse';
-  if(ui.me&&ROSTER.some(r=>r.no===ui.me)){S.screen='app';S.ptab='me'}else{S.screen='login';S.loginStep='pick';S.pickSel=players[0].no}
-  render();
-  setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){setOnline(false)}},20000);
-}
+function startPoll(){setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){setOnline(false)}},20000);}
+async function boot(){loadUI();seed();try{await pull()}catch(e){setOnline(false);cacheLoad()}
+  S.strategy=settings.splitStrategy||'powerhouse';S.applied=settings.splitStrategy||'powerhouse';S.pickSel=players[0].no;
+  const jt=new URLSearchParams(location.search).get('join');
+  if(jt){try{const r=await apiGet('/api/join?t='+encodeURIComponent(jt));if(r&&r.ok){S.screen='login';S.loginStep='claim';S.claimToken=jt;S.claimNo=r.player.no;render();startPoll();return;}}catch(e){}}
+  const sess=localStorage.getItem(SK);
+  if(sess){try{const r=await apiSend('POST','/api/session',{session:sess});if(r&&r.ok){ui.me=r.no;ui.isCoach=r.isCoach;ui.mode=r.no==null?'coach':'player';S.screen='app';S.ptab='me';S.ctab='squad';render();startPoll();return;}}catch(e){localStorage.removeItem(SK)}}
+  S.screen='login';S.loginStep='signin';render();startPoll();}
 boot();
 </script>
 </body>
