@@ -38,7 +38,7 @@ function blankPlayer(no) {
 function defaultState() {
   return { players: ROSTER_NOS.map(blankPlayer),
     settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 },
-    sessions: {}, installId: newToken(), updatedAt: Date.now() };
+    sessions: {}, matchday: { A: {}, B: {}, C: {} }, installId: newToken(), updatedAt: Date.now() };
 }
 
 let state = loadState();
@@ -54,6 +54,7 @@ function loadState() {
     });
     s.settings = Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 }, s.settings || {});
     s.sessions = s.sessions || {};
+    s.matchday = s.matchday || { A: {}, B: {}, C: {} }; ['A','B','C'].forEach(k => { s.matchday[k] = s.matchday[k] || {}; });
     s.installId = s.installId || newToken();
     return s;
   } catch (e) {
@@ -160,12 +161,12 @@ app.post('/api/invites/regen', (req, res) => {
 app.get('/api/health', (req, res) => res.json({ ok: true, updatedAt: state.updatedAt, installId: state.installId, dataDir: DATA_DIR, onDataVolume: DATA_DIR === '/data' }));
 app.get('/api/state', (req, res) => {
   // read-only: viewing team-mates & rivals is allowed. Strip secrets.
-  res.json({ players: state.players.map(({ authPin, inviteToken, ...rest }) => rest), settings: state.settings, updatedAt: state.updatedAt, installId: state.installId });
+  res.json({ players: state.players.map(({ authPin, inviteToken, ...rest }) => rest), settings: state.settings, matchday: state.matchday, updatedAt: state.updatedAt, installId: state.installId });
 });
 
 // Coach: download a full backup snapshot (players + games + settings)
 app.get('/api/backup', (req, res) => { if (!gateCoach(req, res)) return;
-  res.json({ voxstars: 1, exportedAt: Date.now(), players: state.players, settings: state.settings }); });
+  res.json({ voxstars: 1, exportedAt: Date.now(), players: state.players, settings: state.settings, matchday: state.matchday }); });
 // Coach: restore from a backup snapshot (brings back games, PINs, teams, targets)
 app.post('/api/restore', (req, res) => { if (!gateCoach(req, res)) return;
   const b = req.body || {}; if (!Array.isArray(b.players)) return res.status(400).json({ error: 'not a valid backup' });
@@ -178,6 +179,7 @@ app.post('/api/restore', (req, res) => { if (!gateCoach(req, res)) return;
       authPin: bk.authPin ?? (cur && cur.authPin) ?? null, inviteToken: bk.inviteToken || (cur && cur.inviteToken) || newToken(), claimed: !!bk.claimed };
   });
   if (b.settings) state.settings = Object.assign(state.settings, b.settings);
+  if (b.matchday) state.matchday = b.matchday;
   persist(); res.json({ ok: true, restored: b.players.length });
 });
 
@@ -243,6 +245,20 @@ app.post('/api/import', (req, res) => { if (!gateCoach(req, res)) return;
     if (!dup) { p.games.push(g); added++; } }); });
   persist(); res.json({ ok: true, added }); });
 app.post('/api/reset', (req, res) => { if (!gateCoach(req, res)) return; const keep = state.installId; state = defaultState(); state.installId = keep; persist(); res.json({ ok: true }); });
+// Match day: coach records each sub-team's tournament games (2 per player), kept separate from practice.
+app.post('/api/matchday', (req, res) => { if (!gateCoach(req, res)) return;
+  const b = req.body || {}, team = b.team;
+  if (!['A','B','C'].includes(team)) return res.status(400).json({ error: 'team must be A/B/C' });
+  state.matchday[team] = state.matchday[team] || {};
+  if (b.clear) { state.matchday[team] = {}; persist(); return res.json({ ok: true, matchday: state.matchday }); }
+  const no = Number(b.no), game = Number(b.game);
+  if (!ROSTER_NOS.includes(no) || ![1,2].includes(game)) return res.status(400).json({ error: 'bad no/game' });
+  const score = Math.max(0, Math.min(300, parseInt(b.score,10) || 0));
+  const strikes = Math.max(0, Math.min(12, parseInt(b.strikes,10) || 0));
+  const spares = Math.max(0, Math.min(10, parseInt(b.spares,10) || 0));
+  state.matchday[team][no + '-' + game] = { score, strikes, spares };
+  persist(); res.json({ ok: true, matchday: state.matchday });
+});
 
 /* ---------------- static app ---------------- */
 app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res, fp) => { if (fp.endsWith('.html')) res.set('Cache-Control', 'no-cache'); } }));

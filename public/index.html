@@ -65,7 +65,7 @@ const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Veran
 const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A",teamSize:5,teamsCount:3};
 const CK="vox_v3_cache",UK="vox_v3_ui",PK="vox_v3_pin",MEK="vox_v3_me",SK="vox_v3_session";
 
-let players=[], settings={...DEFSET}, online=false, lastSync=0;
+let players=[], settings={...DEFSET}, matchday={A:{},B:{},C:{}}, online=false, lastSync=0;
 let ui={me:null,mode:"player",isCoach:false};
 let coachPin=localStorage.getItem(PK)||"";
 let S={ screen:"login", loginStep:"pick", pickSel:null,
@@ -79,10 +79,10 @@ let _tt=null;
 function seed(){ players=ROSTER.map(r=>({...r,games:[],available:true,estAvg:null,team:null,pin:false,target:null})); }
 function merge(d){ const by=new Map((d.players||[]).map(p=>[p.no,p]));
   players=ROSTER.map(r=>{const s=by.get(r.no)||{};return {...r,games:s.games||[],available:s.available!==false,estAvg:(s.estAvg??null),team:(s.team??null),pin:!!s.pin,target:(s.target??null)};});
-  if(d.settings) settings={...DEFSET,...d.settings}; lastSync=d.updatedAt||Date.now();
+  if(d.settings) settings={...DEFSET,...d.settings}; if(d.matchday) matchday={A:{...(d.matchday.A||{})},B:{...(d.matchday.B||{})},C:{...(d.matchday.C||{})}}; lastSync=d.updatedAt||Date.now();
   if(d.installId){const seen=localStorage.getItem('vox_install');if(seen&&seen!==d.installId){S.dataReset=true;try{render()}catch(e){}}try{localStorage.setItem('vox_install',d.installId)}catch(e){}} }
-function cacheSave(){try{localStorage.setItem(CK,JSON.stringify({players,settings,lastSync}))}catch(e){}}
-function cacheLoad(){try{const d=JSON.parse(localStorage.getItem(CK));if(d&&d.players){players=d.players;settings={...DEFSET,...d.settings};lastSync=d.lastSync||0;return true}}catch(e){}return false}
+function cacheSave(){try{localStorage.setItem(CK,JSON.stringify({players,settings,matchday,lastSync}))}catch(e){}}
+function cacheLoad(){try{const d=JSON.parse(localStorage.getItem(CK));if(d&&d.players){players=d.players;settings={...DEFSET,...d.settings};matchday=d.matchday||{A:{},B:{},C:{}};lastSync=d.lastSync||0;return true}}catch(e){}return false}
 function saveUI(){try{localStorage.setItem(UK,JSON.stringify(ui))}catch(e){}}
 function loadUI(){try{const d=JSON.parse(localStorage.getItem(UK));if(d)ui={...ui,...d}}catch(e){}}
 const P=no=>players.find(p=>p.no===+no);
@@ -384,7 +384,7 @@ function profileViewHTML(){const m=disp(P(ui.me));return `<div style="padding:18
     <button onclick="signOut()" style="width:100%;margin-top:10px;border-radius:14px;padding:13px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--muted2)">Sign out</button></div>`}
 
 /* ============ COACH BODY ============ */
-function coachBodyHTML(){if(S.ctab==='session')return sessionViewHTML();if(S.ctab==='teams')return optimizerViewHTML();return squadViewHTML()}
+function coachBodyHTML(){if(S.ctab==='session')return sessionViewHTML();if(S.ctab==='teams')return optimizerViewHTML();if(S.ctab==='match')return matchDayViewHTML();return squadViewHTML()}
 function squadViewHTML(){const avail=players.filter(p=>p.available!==false).length,needs=players.filter(p=>disp(p).needs).length,impr=players.filter(p=>trendOf(p)>0).length;
   const cards=players.map(p=>{const d=disp(p);const la=lastLog(p),da=daysAgo(la);const flag=d.needs?'var(--bad)':(d.trend<0?'var(--gold)':'transparent');
     const tag=d.role==='C'?'<span style="font-size:8.5px;font-weight:800;background:var(--navy);color:#fff;padding:2px 6px;border-radius:5px">C</span>':(d.role==='VC'?'<span style="font-size:8.5px;font-weight:800;background:var(--navy);color:#fff;padding:2px 6px;border-radius:5px">VC</span>':(d.g==='F'?'<span style="font-size:9px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:2px 6px;border-radius:5px">♀</span>':''));
@@ -438,6 +438,33 @@ function optimizerViewHTML(){const t=teamsForDisplay(),cap=settings.capCr||25;
     ${showBanner?`<div style="display:flex;align-items:center;gap:10px;background:var(--navy);border-radius:14px;padding:12px 14px;margin-top:12px;color:#fff"><div style="font-size:12.5px;flex:1">A stronger split is available — <span style="color:#7bd88f;font-weight:700">${delta>0?'+':''}${delta} projected pins</span></div><button onclick="applySplit()" style="background:var(--gold);color:var(--navy);border:none;border-radius:9px;padding:9px 13px;font-weight:700;font-size:12.5px;cursor:pointer">Apply</button></div>`:''}
     ${cards}
     <div style="text-align:center;font-size:11px;color:#a9b8c6;margin-top:14px;line-height:1.5">Captain + 2 vice-captains locked to separate sub-teams.<br>Each: 4 men + 1 woman · ≤ 25 Cr base.</div></div>`}
+function mdEntry(team,no,game){return (matchday[team]||{})[no+'-'+game]||{}}
+function matchDayViewHTML(){const team=S.mdTeam||'A';const c=currentTeams();let list=c[team];if(!list||!list.length)list=players.filter(p=>p.team===team);const md=matchday[team]||{};
+  let series=0,tStr=0,tSpr=0,entered=0,fem=0;list.forEach(p=>{[1,2].forEach(g=>{const e=md[p.no+'-'+g];if(e){series+=e.score||0;tStr+=e.strikes||0;tSpr+=e.spares||0;entered++;if(p.g==='F')fem+=e.score||0}})});
+  const teamChips=['A','B','C'].map(t=>`<button onclick="mdSetTeam('${t}')" class="chip ${t===team?'on':''}">Sub-team ${t}</button>`).join('');
+  const col=(p,g)=>{const e=mdEntry(team,p.no,g);return `<div style="width:66px;flex:0 0 auto"><input inputmode="numeric" maxlength="3" value="${e.score||''}" placeholder="—" onchange="setMatchScore('${team}',${p.no},${g},this.value)" class="num" style="width:100%;text-align:center;font-size:17px;font-weight:700;color:var(--navy);border:1px solid var(--line);border-radius:10px;padding:8px 4px;background:#fff"><div onclick="editCellSS('${team}',${p.no},${g})" style="text-align:center;font-size:9px;color:${(e.strikes||e.spares)?'#8a5a00':'#c3ccd6'};margin-top:3px;cursor:pointer">${e.score?((e.strikes||0)+'✕ '+(e.spares||0)+'/'):'✕ /'}</div></div>`};
+  const rows=list.map(p=>`<div style="display:flex;align-items:center;gap:9px;background:#fff;border-radius:14px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)"><div class="num" style="width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">2 qualifier games</div></div>${col(p,1)}${col(p,2)}</div>`).join('');
+  return `<div style="padding:16px 16px 100px">
+    <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:18px;padding:16px;color:#fff">
+      <div style="font-size:15px;font-weight:700">Match day · Sub-team ${team}</div>
+      <div style="font-size:11.5px;opacity:.72;margin-top:3px;line-height:1.4">Enter each player's 2 qualifier games. Tie-breakers: strikes → spares → female score.</div>
+      <div style="display:flex;gap:6px;margin-top:12px">${teamChips}</div>
+      <div style="display:flex;gap:7px;margin-top:14px">
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700;color:var(--gold2)">${series}</div><div style="font-size:8.5px;opacity:.6">series</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tStr}</div><div style="font-size:8.5px;opacity:.6">strikes ✕</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tSpr}</div><div style="font-size:8.5px;opacity:.6">spares /</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${entered}<span style="font-size:11px;opacity:.6">/10</span></div><div style="font-size:8.5px;opacity:.6">games</div></div></div>
+      ${fem?`<div style="font-size:10.5px;opacity:.72;margin-top:10px">Female score (tie-breaker 3): <b style="color:var(--gold2)">${fem}</b></div>`:''}</div>
+    <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Player · game 1 · game 2</div><div style="font-size:10px;color:#a9b8c6;margin-left:auto">type score · tap ✕/ for strikes-spares</div></div>
+    ${rows}
+    <button onclick="shareMatchSummary('${team}')" style="width:100%;margin-top:6px;border-radius:12px;padding:12px;font-size:12.5px;font-weight:700;cursor:pointer;border:none;background:var(--gold);color:var(--navy)">Share Sub-team ${team} summary</button>
+    <button onclick="clearMatchTeam('${team}')" style="width:100%;margin-top:8px;border-radius:12px;padding:10px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid #f0d0cc;background:#fdeeec;color:var(--bad)">Clear Sub-team ${team} match scores</button>
+    <div style="text-align:center;font-size:10.5px;color:#a9b8c6;margin-top:12px;line-height:1.5">Match scores are kept separate from practice — they never change anyone's practice average.</div></div>`}
+function mdSetTeam(t){S.mdTeam=t;S._anim=true;render()}
+function setMatchScore(team,no,game,val){const cur=mdEntry(team,no,game);let s=parseInt(String(val).replace(/[^\d]/g,''),10);if(isNaN(s))s=0;s=Math.max(0,Math.min(300,s));coachAction('POST','/api/matchday',{team,no,game,score:s,strikes:cur.strikes||0,spares:cur.spares||0},r=>{if(r&&r.matchday)matchday=r.matchday;cacheSave();render()})}
+function editCellSS(team,no,game){const cur=mdEntry(team,no,game);const v=prompt("Strikes and spares for this game — e.g. 3,1",(cur.strikes||0)+","+(cur.spares||0));if(v==null)return;const parts=String(v).split(/[^\d]+/).filter(x=>x!=='');const st=Math.max(0,Math.min(12,parseInt(parts[0],10)||0)),sp=Math.max(0,Math.min(10,parseInt(parts[1],10)||0));coachAction('POST','/api/matchday',{team,no,game,score:cur.score||0,strikes:st,spares:sp},r=>{if(r&&r.matchday)matchday=r.matchday;cacheSave();render()})}
+function clearMatchTeam(team){if(!confirm("Clear all match scores for Sub-team "+team+"? This can't be undone."))return;coachAction('POST','/api/matchday',{team,clear:true},r=>{if(r&&r.matchday)matchday=r.matchday;cacheSave();render();toast("Cleared","Sub-team "+team+" match scores removed")})}
+function shareMatchSummary(team){const c=currentTeams();let list=c[team];if(!list||!list.length)list=players.filter(p=>p.team===team);const md=matchday[team]||{};let series=0,tStr=0,tSpr=0,entered=0,fem=0;list.forEach(p=>{[1,2].forEach(g=>{const e=md[p.no+'-'+g];if(e){series+=e.score||0;tStr+=e.strikes||0;tSpr+=e.spares||0;entered++;if(p.g==='F')fem+=e.score||0}})});const txt="🎳 VOX STARS · Sub-team "+team+" (match day)\nSeries: "+series+"  ("+entered+"/10 games)\nStrikes: "+tStr+"  ·  Spares: "+tSpr+"  ·  Female: "+fem;try{if(navigator.share){navigator.share({text:txt}).catch(()=>{})}else{window.open("https://wa.me/?text="+encodeURIComponent(txt),"_blank")}}catch(e){try{window.open("https://wa.me/?text="+encodeURIComponent(txt),"_blank")}catch(_){}}toast("Summary ready","Share it with the team")}
 
 /* ============ NAV / FAB ============ */
 function playerNavHTML(){const n=(t,on,svg,lbl)=>`<button class="navbtn ${on?'on':''}" onclick="goP('${t}')">${svg}<span>${lbl}</span></button>`;
@@ -450,7 +477,8 @@ function coachNavHTML(){const n=(t,on,svg,lbl)=>`<button class="navbtn ${on?'on'
   return `<div style="flex:0 0 auto;height:78px;background:#fff;border-top:1px solid var(--line);display:flex;padding:8px 6px calc(8px + env(safe-area-inset-bottom))">
     ${n('squad',S.ctab==='squad','<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="7" rx="1.5"></rect><rect x="14" y="4" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="6" rx="1.5"></rect><rect x="14" y="14" width="7" height="6" rx="1.5"></rect></svg>','Squad')}
     ${n('session',S.ctab==='session','<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"></path><circle cx="19" cy="17" r="2.5"></circle></svg>','Log session')}
-    ${n('teams',S.ctab==='teams','<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 4-3 7-7 8-4-1-7-4-7-8V7z"></path><path d="M9 12l2 2 4-4"></path></svg>','Optimizer')}</div>`}
+    ${n('teams',S.ctab==='teams','<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 4-3 7-7 8-4-1-7-4-7-8V7z"></path><path d="M9 12l2 2 4-4"></path></svg>','Optimizer')}
+    ${n('match',S.ctab==='match','<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12v3a6 6 0 0 1-12 0zM6 6H4a2 2 0 0 0 2 2M18 6h2a2 2 0 0 1-2 2M9 20h6M12 13v3"></path></svg>','Match Day')}</div>`}
 function fabHTML(){return `<button onclick="openLog()" style="position:absolute;right:18px;bottom:92px;z-index:30;height:56px;padding:0 22px 0 18px;border:none;border-radius:30px;background:var(--gold);color:var(--navy);font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;cursor:pointer;box-shadow:0 12px 26px -6px rgba(233,185,73,.6)"><span style="font-size:24px;line-height:0;margin-top:-2px">＋</span>Log a game</button>`}
 
 /* ============ LOG SHEET ============ */

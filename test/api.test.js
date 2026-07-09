@@ -76,6 +76,15 @@ async function req(method, path, { body, session, coach } = {}) {
   r = await req('POST', '/api/restore', { body: snapshot }); ok(r.status === 401, 'restore blocked without coach');
   r = await req('POST', '/api/restore', { body: snapshot, coach: PIN }); d = await J(r); ok(r.status === 200 && d.restored === 15, 'coach restores from backup');
   r = await req('GET', '/api/backup', { coach: PIN }); d = await J(r); ok(d.players.some(p => (p.games || []).length > 0), 'games survive the restore');
+
+  console.log('MATCH DAY');
+  r = await req('GET', '/api/state'); d = await J(r); ok(d.matchday && d.matchday.A && d.matchday.B && d.matchday.C, 'state exposes matchday A/B/C');
+  r = await req('POST', '/api/matchday', { body: { team: 'A', no: 149, game: 1, score: 185, strikes: 5, spares: 2 }, coach: PIN }); d = await J(r);
+  ok(r.status === 200 && d.matchday.A['149-1'].score === 185 && d.matchday.A['149-1'].strikes === 5, 'coach records a match game (score + tie-breakers)');
+  r = await req('POST', '/api/matchday', { body: { team: 'A', no: 149, game: 1, score: 185 } }); ok(r.status === 401, 'match day blocked without coach');
+  r = await req('POST', '/api/matchday', { body: { team: 'X', no: 149, game: 1, score: 100 }, coach: PIN }); ok(r.status === 400, 'bad team rejected');
+  r = await req('POST', '/api/matchday', { body: { team: 'A', no: 149, game: 3, score: 100 }, coach: PIN }); ok(r.status === 400, 'bad game number rejected');
+  r = await req('POST', '/api/matchday', { body: { team: 'A', clear: true }, coach: PIN }); d = await J(r); ok(r.status === 200 && Object.keys(d.matchday.A).length === 0, 'coach clears a sub-team match scores');
   r = await req('POST', '/api/reset', { coach: PIN }); ok(r.status === 200, 'coach reset');
   r = await req('GET', '/api/state'); d = await J(r); ok(d.installId === iid, 'installId stable across reset (no false alarm on deliberate reset)');
 
