@@ -62,7 +62,22 @@ async function req(method, path, { body, session, coach } = {}) {
   r = await req('PUT', '/api/settings', { body: { capCr: 24 }, coach: PIN }); d = await J(r); ok(d.settings.capCr === 24, 'coach can update settings');
   r = await req('POST', '/api/mytarget', { body: { no: 99, target: 150 }, session: s99 }); ok(r.status === 200, 'player sets own target');
   r = await req('POST', '/api/mytarget', { body: { no: 38, target: 150 }, session: s99 }); ok(r.status === 403, 'player cannot set ANOTHER target');
+
+  console.log('BACKUP + RESTORE + RESET ALARM');
+  r = await req('POST', '/api/games', { body: { no: 99, score: 175 }, coach: PIN }); ok(r.status === 200, 'seed a game to back up');
+  r = await req('GET', '/api/health'); d = await J(r); ok(!!d.installId && d.dataDir !== undefined, 'health exposes installId + dataDir');
+  r = await req('GET', '/api/state'); d = await J(r); const iid = d.installId; ok(!!iid, 'state exposes installId (reset-detector)');
+  r = await req('GET', '/api/backup'); ok(r.status === 401, 'backup blocked without coach');
+  r = await req('GET', '/api/backup', { coach: PIN }); d = await J(r);
+  ok(r.status === 200 && d.voxstars === 1 && Array.isArray(d.players) && d.players.length === 15, 'coach downloads full backup (15 players)');
+  ok(d.players.some(p => (p.games || []).length > 0), 'backup includes logged games');
+  const snapshot = JSON.parse(JSON.stringify(d));
+  r = await req('POST', '/api/restore', { body: { players: 'nope' }, coach: PIN }); ok(r.status === 400, 'invalid backup rejected');
+  r = await req('POST', '/api/restore', { body: snapshot }); ok(r.status === 401, 'restore blocked without coach');
+  r = await req('POST', '/api/restore', { body: snapshot, coach: PIN }); d = await J(r); ok(r.status === 200 && d.restored === 15, 'coach restores from backup');
+  r = await req('GET', '/api/backup', { coach: PIN }); d = await J(r); ok(d.players.some(p => (p.games || []).length > 0), 'games survive the restore');
   r = await req('POST', '/api/reset', { coach: PIN }); ok(r.status === 200, 'coach reset');
+  r = await req('GET', '/api/state'); d = await J(r); ok(d.installId === iid, 'installId stable across reset (no false alarm on deliberate reset)');
 
   console.log('STATIC');
   r = await req('GET', '/'); const html = await r.text();

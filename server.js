@@ -36,7 +36,7 @@ function blankPlayer(no) {
 function defaultState() {
   return { players: ROSTER_NOS.map(blankPlayer),
     settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 },
-    sessions: {}, updatedAt: Date.now() };
+    sessions: {}, installId: newToken(), updatedAt: Date.now() };
 }
 
 let state = loadState();
@@ -52,6 +52,7 @@ function loadState() {
     });
     s.settings = Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 }, s.settings || {});
     s.sessions = s.sessions || {};
+    s.installId = s.installId || newToken();
     return s;
   } catch (e) {
     const s = defaultState();
@@ -140,10 +141,28 @@ app.post('/api/invites/regen', (req, res) => {
 });
 
 /* ---------------- API ---------------- */
-app.get('/api/health', (req, res) => res.json({ ok: true, updatedAt: state.updatedAt }));
+app.get('/api/health', (req, res) => res.json({ ok: true, updatedAt: state.updatedAt, installId: state.installId, dataDir: DATA_DIR, onDataVolume: DATA_DIR === '/data' }));
 app.get('/api/state', (req, res) => {
   // read-only: viewing team-mates & rivals is allowed. Strip secrets.
-  res.json({ players: state.players.map(({ authPin, inviteToken, ...rest }) => rest), settings: state.settings, updatedAt: state.updatedAt });
+  res.json({ players: state.players.map(({ authPin, inviteToken, ...rest }) => rest), settings: state.settings, updatedAt: state.updatedAt, installId: state.installId });
+});
+
+// Coach: download a full backup snapshot (players + games + settings)
+app.get('/api/backup', (req, res) => { if (!gateCoach(req, res)) return;
+  res.json({ voxstars: 1, exportedAt: Date.now(), players: state.players, settings: state.settings }); });
+// Coach: restore from a backup snapshot (brings back games, PINs, teams, targets)
+app.post('/api/restore', (req, res) => { if (!gateCoach(req, res)) return;
+  const b = req.body || {}; if (!Array.isArray(b.players)) return res.status(400).json({ error: 'not a valid backup' });
+  const byNo = new Map(b.players.map(p => [p.no, p]));
+  state.players = ROSTER_NOS.map(no => {
+    const bk = byNo.get(no); const cur = P(no);
+    if (!bk) return cur || blankPlayer(no);
+    return { no, games: bk.games || [], available: bk.available !== false, lockIn: !!bk.lockIn, lockOut: !!bk.lockOut,
+      estAvg: bk.estAvg ?? null, team: bk.team ?? null, pin: !!bk.pin, target: bk.target ?? null,
+      authPin: bk.authPin ?? (cur && cur.authPin) ?? null, inviteToken: bk.inviteToken || (cur && cur.inviteToken) || newToken(), claimed: !!bk.claimed };
+  });
+  if (b.settings) state.settings = Object.assign(state.settings, b.settings);
+  persist(); res.json({ ok: true, restored: b.players.length });
 });
 
 // Log a game — must be signed in; a player may only log their OWN games; coach may log for anyone
@@ -207,7 +226,7 @@ app.post('/api/import', (req, res) => { if (!gateCoach(req, res)) return;
     const dup = p.games.some(x => x.ts === g.ts || (x.date === g.date && x.score === g.score && x.strikes === g.strikes));
     if (!dup) { p.games.push(g); added++; } }); });
   persist(); res.json({ ok: true, added }); });
-app.post('/api/reset', (req, res) => { if (!gateCoach(req, res)) return; state = defaultState(); persist(); res.json({ ok: true }); });
+app.post('/api/reset', (req, res) => { if (!gateCoach(req, res)) return; const keep = state.installId; state = defaultState(); state.installId = keep; persist(); res.json({ ok: true }); });
 
 /* ---------------- static app ---------------- */
 app.use(express.static(path.join(__dirname, 'public')));

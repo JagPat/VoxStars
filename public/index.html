@@ -79,7 +79,8 @@ let _tt=null;
 function seed(){ players=ROSTER.map(r=>({...r,games:[],available:true,estAvg:null,team:null,pin:false,target:null})); }
 function merge(d){ const by=new Map((d.players||[]).map(p=>[p.no,p]));
   players=ROSTER.map(r=>{const s=by.get(r.no)||{};return {...r,games:s.games||[],available:s.available!==false,estAvg:(s.estAvg??null),team:(s.team??null),pin:!!s.pin,target:(s.target??null)};});
-  if(d.settings) settings={...DEFSET,...d.settings}; lastSync=d.updatedAt||Date.now(); }
+  if(d.settings) settings={...DEFSET,...d.settings}; lastSync=d.updatedAt||Date.now();
+  if(d.installId){const seen=localStorage.getItem('vox_install');if(seen&&seen!==d.installId){S.dataReset=true;try{render()}catch(e){}}try{localStorage.setItem('vox_install',d.installId)}catch(e){}} }
 function cacheSave(){try{localStorage.setItem(CK,JSON.stringify({players,settings,lastSync}))}catch(e){}}
 function cacheLoad(){try{const d=JSON.parse(localStorage.getItem(CK));if(d&&d.players){players=d.players;settings={...DEFSET,...d.settings};lastSync=d.lastSync||0;return true}}catch(e){}return false}
 function saveUI(){try{localStorage.setItem(UK,JSON.stringify(ui))}catch(e){}}
@@ -188,12 +189,31 @@ async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body
 /* ============ TOAST ============ */
 function toast(title,body){S.toast={title,body};render();clearTimeout(_tt);_tt=setTimeout(()=>{S.toast=null;render()},2600)}
 
+/* ============ BACKUP / RESTORE + RESET ALARM ============ */
+function dataResetBannerHTML(){return `<div style="flex:0 0 auto;background:var(--bad);color:#fff;padding:9px 14px;display:flex;align-items:center;gap:10px">
+  <div style="flex:1;font-size:11.5px;font-weight:600;line-height:1.35">&#9888; Your data was reset — persistent storage isn't set up in Coolify. Add a <b>/data</b> volume, then <b>Restore</b> your last backup.</div>
+  <button onclick="dismissReset()" style="flex:0 0 auto;background:rgba(255,255,255,.22);border:none;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:800;cursor:pointer">Got it</button></div>`}
+function dismissReset(){S.dataReset=false;render()}
+async function exportBackup(){try{const r=await apiSend('GET','/api/backup');const n=(r.players||[]).length,gm=(r.players||[]).reduce((s,p)=>s+((p.games||[]).length),0);
+    const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='voxstars-backup-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    toast("Backup downloaded",n+" players · "+gm+" games saved")}
+  catch(e){if(e&&(e.auth||e.forbidden)){toast("Coach only","Unlock the cockpit first");openCoachPin()}else{setOnline(false);toast("No server","Can't reach the app to back up")}}}
+function triggerRestore(){const inp=document.createElement('input');inp.type='file';inp.accept='application/json,.json';inp.onchange=e=>restoreBackup(e);inp.click()}
+function restoreBackup(e){const f=e.target.files&&e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{let data;try{data=JSON.parse(rd.result)}catch(err){toast("Invalid file","That isn't a VOX STARS backup");return}
+    if(!data||!Array.isArray(data.players)){toast("Invalid file","That isn't a VOX STARS backup");return}
+    const gm=data.players.reduce((s,p)=>s+((p.games||[]).length),0);
+    if(!confirm("Restore "+data.players.length+" players and "+gm+" games? This replaces the current data.")) return;
+    coachAction('POST','/api/restore',data,async r=>{try{await pull()}catch(_){}S.dataReset=false;render();toast("Backup restored",((r&&r.restored)||data.players.length)+" players back — PINs & games recovered")})};
+  rd.readAsText(f)}
+
 /* ============ RENDER SHELL ============ */
 function render(){const root=$('#app');const anim=S._anim?'up':'';
   if(S.screen==='login'){root.innerHTML=loginHTML();S._anim=false;wire();return}
   const isCoach=ui.mode==='coach';
   root.innerHTML=`
     ${statusHTML()}
+    ${S.dataReset?dataResetBannerHTML():''}
     ${isCoach?coachHeaderHTML():playerHeaderHTML()}
     <div class="vscroll" id="scroller" style="flex:1;overflow-y:auto;background:var(--app);position:relative">
       <div class="${anim}" style="min-height:100%">${isCoach?coachBodyHTML():playerBodyHTML()}</div>
@@ -361,6 +381,7 @@ function squadViewHTML(){const avail=players.filter(p=>p.available!==false).leng
       <div class="card" style="flex:1;padding:12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--bad)">${needs}</div><div style="font-size:10px;color:var(--muted);font-weight:600">need data</div></div>
       <div class="card" style="flex:1;padding:12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--good)">▲${impr}</div><div style="font-size:10px;color:var(--muted);font-weight:600">improving</div></div></div>
     <button onclick="openInvites()" style="width:100%;margin-top:8px;border-radius:12px;padding:11px;font-size:12.5px;font-weight:700;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--navy)">🔗 Invite links — sign your players in</button>
+    <div style="display:flex;gap:8px;margin-top:8px"><button onclick="exportBackup()" style="flex:1;border-radius:12px;padding:11px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--navy)">⬇ Export backup</button><button onclick="triggerRestore()" style="flex:1;border-radius:12px;padding:11px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--navy)">⬆ Restore</button></div>
     <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Squad readiness</div><div style="font-size:10px;color:#a9b8c6;margin-left:auto">avg · trend · confidence</div></div>${cards}</div>`}
 function sessionViewHTML(){const c=currentTeams();let list=c[S.session.team];if(c.A.length+c.B.length+c.C.length===0)list=players;
   const sIdx=S.session.idx,done=sIdx>=list.length,cur=list[sIdx]||null;
