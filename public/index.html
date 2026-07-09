@@ -93,6 +93,14 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 
 /* ============ AVERAGES + STATS ============ */
 function pstats(p){const g=p.games||[];let n=g.length,sum=0,high=0,strk=0,spr=0;g.forEach(x=>{sum+=+x.score||0;high=Math.max(high,+x.score||0);strk+=+x.strikes||0;spr+=+x.spares||0});return{n,sum,high,strk,spr}}
+/* strike/spare rates + engagement (tie-breakers are strikes -> spares) */
+function srate(p){const ps=pstats(p);return ps.n?ps.strk/ps.n:null}
+function sprate(p){const ps=pstats(p);return ps.n?ps.spr/ps.n:null}
+function lastLog(p){const g=p.games||[];if(!g.length)return null;let t=0;g.forEach(x=>{t=Math.max(t,+x.ts||0)});return t||null}
+function daysAgo(ts){return ts?Math.floor((Date.now()-ts)/86400000):null}
+function gamesInDays(p,d){const cut=Date.now()-d*86400000;return (p.games||[]).filter(x=>(+x.ts||0)>=cut).length}
+function teamStrikes(L){return L.reduce((s,p)=>{const r=srate(p);return s+(r!=null?r:((p.lgStr&&p.lgM)?p.lgStr/p.lgM:0))},0)}
+function teamSpares(L){return L.reduce((s,p)=>{const r=sprate(p);return s+(r!=null?r:0)},0)}
 function eff(p){const pr=pstats(p),lgM=p.lgM||0,lg=p.lgAvg;let avg=null,src="none";
   if(lg!=null&&lgM>0&&pr.n>0){avg=(lg*lgM+pr.sum)/(lgM+pr.n);src="both"}
   else if(lg!=null&&lgM>0){avg=lg;src="league"}
@@ -179,7 +187,7 @@ function guidance(p){const g=p.games||[],n=g.length,e=eff(p),avg=e.avg,target=p.
   let head,detail;
   if(avg>=target){head="You're at your "+target+" target 🎯";detail="Now make "+target+" your floor — aim to clear it every game. Keep the same setup and pace."}
   else{head="Your next "+Math.min(gap,12)+" pins are in your strikes";detail="You're "+gap+" short of "+target+" — about "+Math.max(1,Math.ceil(gap/25))+" more strike"+(Math.ceil(gap/25)>1?"s":"")+" a game. Groove one repeatable first ball; never leave a single pin on the spare."}
-  return{head,detail,chips:[{k:spg.toFixed(1)+" strikes/gm",gold:true},{k:"team avg "+teamStrk.toFixed(1),gold:false}]}}
+  return{head,detail,chips:[{k:spg.toFixed(1)+" strikes/gm",gold:true},{k:"strikes break ties",gold:false},{k:"team "+teamStrk.toFixed(1)+"/gm",gold:false}]}}
 function avgTeamStrikesPerGame(){let tot=0,gm=0;players.forEach(p=>{const ps=pstats(p);tot+=ps.strk;gm+=ps.n});return gm?tot/gm:0}
 
 /* ============ SYNC / API ============ */
@@ -293,6 +301,7 @@ function meViewHTML(){const m=disp(P(ui.me)),target=m.target,pct=m.avg?Math.min(
   const bars=m.recent.length?m.recent.map(v=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end"><div class="num" style="font-size:10px;font-weight:700;color:var(--muted2)">${v}</div><div style="width:100%;border-radius:6px 6px 3px 3px;height:${Math.max(8,Math.round(v/maxr*100))}%;background:${v===maxr?'var(--gold)':'#c3d2e0'}"></div></div>`).join(''):'<div style="flex:1;color:var(--muted);font-size:12px;align-self:center;text-align:center">No games logged yet — tap ＋ Log a game.</div>';
   const gd=guidance(P(ui.me));
   const ss=seasonStats(P(ui.me));
+  const sr=srate(P(ui.me)),wk=gamesInDays(P(ui.me),7);
   const ag=(P(ui.me).games||[]);
   const gamesList=ag.length?ag.map((g,i)=>({...g,num:i+1})).reverse().slice(0,25).map(g=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)"><div class="num" style="width:42px;height:34px;border-radius:9px;background:linear-gradient(160deg,var(--gold2),var(--gold));color:var(--navy);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:0 0 auto">${g.score}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">Game ${g.num}</div><div style="font-size:10.5px;color:var(--muted)">${g.date||''} · ${g.strikes||0}✕ · ${g.spares||0}/${g.by==='coach'?' · by coach':''}</div></div><button onclick="delMyGame('${g.ts}')" title="Delete" style="flex:0 0 auto;background:#fdeeec;color:var(--bad);border:none;border-radius:8px;width:32px;height:32px;font-size:14px;cursor:pointer">✕</button></div>`).join(''):'<div style="padding:8px 2px;color:var(--muted);font-size:12px">No games yet — tap ＋ Log a game.</div>';
   return `<div style="padding:18px 18px 120px">
@@ -308,8 +317,9 @@ function meViewHTML(){const m=disp(P(ui.me)),target=m.target,pct=m.avg?Math.min(
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px">
       <div class="card" style="padding:14px 12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--navy)">${m.games}</div><div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">games</div></div>
       <div class="card" style="padding:14px 12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--navy)">${m.best||'—'}</div><div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">best game</div></div>
-      <div class="card" style="padding:14px 12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--navy)">${m.strikes}<span style="font-size:12px;color:#c3ccd6"> / </span>${m.spares}</div><div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">strikes / spares</div></div>
+      <div class="card" style="padding:14px 12px"><div class="num" style="font-size:22px;font-weight:700;color:var(--navy)">${sr==null?'—':sr.toFixed(1)}</div><div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">strikes / game</div><div style="font-size:9px;color:#a9b8c6;margin-top:2px">${m.strikes}✕ · ${m.spares}/ total</div></div>
     </div>
+    <div style="text-align:center;font-size:11px;margin-top:10px;font-weight:600;color:${wk>0?'var(--good)':'#8a5a00'}">${wk>0?('🔥 '+wk+' game'+(wk>1?'s':'')+' this week — keep the streak'):'No games in 7 days — log one to keep momentum'}</div>
     ${seasonCardHTML(ss)}
     <div class="card" style="padding:16px 18px;margin-top:12px"><div style="display:flex;align-items:baseline;justify-content:space-between"><div style="font-size:12px;font-weight:700;color:var(--navy)">Last 6 games</div><div style="font-size:11px;color:var(--muted)">newest →</div></div>
       <div style="display:flex;align-items:flex-end;gap:8px;height:78px;margin-top:12px">${bars}</div></div>
@@ -373,7 +383,7 @@ function profileViewHTML(){const m=disp(P(ui.me));return `<div style="padding:18
 /* ============ COACH BODY ============ */
 function coachBodyHTML(){if(S.ctab==='session')return sessionViewHTML();if(S.ctab==='teams')return optimizerViewHTML();return squadViewHTML()}
 function squadViewHTML(){const avail=players.filter(p=>p.available!==false).length,needs=players.filter(p=>disp(p).needs).length,impr=players.filter(p=>trendOf(p)>0).length;
-  const cards=players.map(p=>{const d=disp(p);const flag=d.needs?'var(--bad)':(d.trend<0?'var(--gold)':'transparent');
+  const cards=players.map(p=>{const d=disp(p);const la=lastLog(p),da=daysAgo(la);const flag=d.needs?'var(--bad)':(d.trend<0?'var(--gold)':'transparent');
     const tag=d.role==='C'?'<span style="font-size:8.5px;font-weight:800;background:var(--navy);color:#fff;padding:2px 6px;border-radius:5px">C</span>':(d.role==='VC'?'<span style="font-size:8.5px;font-weight:800;background:var(--navy);color:#fff;padding:2px 6px;border-radius:5px">VC</span>':(d.g==='F'?'<span style="font-size:9px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:2px 6px;border-radius:5px">♀</span>':''));
     const conf=Math.min(100,d.games/8*100);
     return `<div class="card" style="padding:12px 13px;margin-bottom:8px;border-left:4px solid ${flag}">
@@ -381,7 +391,7 @@ function squadViewHTML(){const avail=players.filter(p=>p.available!==false).leng
         <div class="num" style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;flex:0 0 auto;background:${avatarBg(d.g)}">${d.initials}</div>
         <div style="min-width:0;flex:1"><div style="display:flex;align-items:center;gap:6px"><span style="font-weight:700;font-size:13.5px;color:var(--navy)">${esc(shortName(d.name))}</span>${tag}</div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:5px"><div style="flex:1;max-width:80px;height:4px;border-radius:2px;background:#eef2f6;overflow:hidden"><div style="height:100%;border-radius:2px;width:${conf}%;background:${d.needs?'var(--bad)':'var(--good)'}"></div></div><span style="font-size:10px;color:${d.gap<=0?'var(--good)':'#8a5a00'};font-weight:700">${d.gap<=0?'on target':'+'+d.gap+' to go'}</span></div></div>
-        <div style="text-align:right;flex:0 0 auto"><div class="num" style="font-size:19px;font-weight:700;color:var(--navy)">${d.avg==null?'—':d.avg} <span style="font-size:12px;color:${arrowCol(d.trend)}">${arrow(d.trend)}</span></div><div style="font-size:9.5px;color:var(--muted)">${d.games} games${d.team?' · Team '+d.team:''}</div></div></div>
+        <div style="text-align:right;flex:0 0 auto"><div class="num" style="font-size:19px;font-weight:700;color:var(--navy)">${d.avg==null?'—':d.avg} <span style="font-size:12px;color:${arrowCol(d.trend)}">${arrow(d.trend)}</span></div><div style="font-size:9.5px;color:${da==null||da>7?'var(--bad)':'var(--muted)'}">${d.games} games · ${da==null?'never logged':(da===0?'logged today':da+'d ago')}${d.team?' · '+d.team:''}</div></div></div>
       ${d.needs?`<div style="display:flex;align-items:center;gap:8px;margin-top:9px;background:#fef2f2;border-radius:9px;padding:7px 10px"><span style="font-size:11px;color:var(--bad);font-weight:600;flex:1">Only ${d.games} games — low confidence</span><button onclick="nudge(${d.no})" style="background:var(--navy);color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">Nudge</button><button onclick="logForThem(${d.no})" style="background:var(--gold);color:var(--navy);border:none;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">Log for them</button></div>`:''}
       <div style="margin-top:9px"><button onclick="toggleAvail(${d.no})" style="width:100%;border-radius:9px;padding:8px;font-size:11.5px;font-weight:700;cursor:pointer;border:1px solid ${d.avail?'#cfe6d8':'#f0d0cc'};background:${d.avail?'#eef7f1':'#fdeeec'};color:${d.avail?'var(--good)':'var(--bad)'}">${d.avail?'✓ Available for next match':'✗ Unavailable — tap to include'}</button></div></div>`}).join('');
   return `<div style="padding:16px 16px 100px">
@@ -413,11 +423,12 @@ function sessionViewHTML(){const c=currentTeams();let list=c[S.session.team];if(
       <div style="text-align:center;font-size:11px;color:#a9b8c6;margin-top:12px">📷 Snap the overhead monitor to auto-fill <span style="color:#8a5a00;font-weight:700">(beta)</span></div>`}</div>`}
 function optimizerViewHTML(){const t=teamsForDisplay(),cap=settings.capCr||25;
   const deltas={balanced:0,powerhouse:18,tiered:11};const delta=deltas[S.strategy]-deltas[S.applied];const showBanner=S.strategy!==S.applied;
-  const cards=['A','B','C'].map(k=>{const L=t[k],base=sumBase(L),proj=Math.round(sumAvg(L)),lead=L.find(p=>p.role!=='P')||L[0];
+  const cards=['A','B','C'].map(k=>{const L=t[k],base=sumBase(L),proj=Math.round(sumAvg(L)),lead=L.find(p=>p.role!=='P')||L[0];const tstr=teamStrikes(L),tspr=teamSpares(L);
     const chips=[...L].sort((a,b)=>teamAvg(b)-teamAvg(a)).map(p=>{const d=disp(p);return `<div style="display:flex;align-items:center;gap:6px;background:var(--app);border-radius:20px;padding:5px 10px 5px 5px"><div class="num" style="width:24px;height:24px;border-radius:50%;background:${avatarBg(d.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px">${d.initials}</div><span style="font-size:11.5px;font-weight:600;color:var(--navy)">${esc(shortName(d.name))}</span><span class="num" style="font-size:11px;font-weight:700;color:var(--muted)">${teamAvg(p)}</span></div>`}).join('');
     return `<div class="card" style="padding:15px;margin-top:12px"><div style="display:flex;align-items:center;gap:10px"><div class="num" style="width:32px;height:32px;border-radius:9px;background:var(--navy);color:var(--gold2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px">${k}</div><div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--navy)">Sub-team ${k}</div><div style="font-size:10.5px;color:var(--muted)">led by ${esc(shortName(lead.name))}</div></div><div style="text-align:right"><div class="num" style="font-size:18px;font-weight:700;color:var(--navy)">${proj}</div><div style="font-size:9.5px;color:var(--muted)">projected</div></div></div>
       <div style="display:flex;align-items:center;gap:9px;margin-top:11px"><div style="flex:1;height:6px;border-radius:3px;background:#eef2f6;overflow:hidden"><div style="height:100%;border-radius:3px;width:${Math.min(100,base/cap*100)}%;background:${base>cap?'var(--bad)':'var(--good)'}"></div></div><div class="num" style="font-size:11px;font-weight:700;color:${base>cap?'var(--bad)':'var(--good)'}">${base.toFixed(1)} / ${cap} Cr</div></div>
-      <div style="display:flex;gap:5px;margin-top:12px;flex-wrap:wrap">${chips}</div></div>`}).join('');
+      <div style="display:flex;gap:8px;margin-top:10px"><div style="flex:1;background:var(--app);border-radius:9px;padding:7px;text-align:center"><div class="num" style="font-size:14px;font-weight:700;color:var(--navy)">${tstr.toFixed(1)}</div><div style="font-size:8.5px;color:var(--muted)">strikes/gm ✕</div></div><div style="flex:1;background:var(--app);border-radius:9px;padding:7px;text-align:center"><div class="num" style="font-size:14px;font-weight:700;color:var(--navy)">${tspr.toFixed(1)}</div><div style="font-size:8.5px;color:var(--muted)">spares/gm /</div></div></div>
+      <div style="display:flex;gap:5px;margin-top:10px;flex-wrap:wrap">${chips}</div></div>`}).join('');
   return `<div style="padding:16px 16px 100px">
     <div class="lbl" style="margin:2px 2px 8px">Split strategy</div>
     <div class="seg"><button class="${S.strategy==='balanced'?'on':''}" onclick="setStrategy('balanced')">Balanced</button><button class="${S.strategy==='powerhouse'?'on':''}" onclick="setStrategy('powerhouse')">Powerhouse</button><button class="${S.strategy==='tiered'?'on':''}" onclick="setStrategy('tiered')">Tiered</button></div>
@@ -536,7 +547,7 @@ function enterCoachDirect(){ui.mode='coach';S.screen='app';S.ctab='squad';saveUI
 function openCoachPin(){const pin=prompt("Coach / Captain PIN");if(pin==null)return;const pn=pin.trim();const prev=coachPin;coachPin=pn;
   apiSend('POST','/api/coach/verify',{pin:pn}).then(r=>{if(r.ok){localStorage.setItem(PK,pn);ui.mode='coach';ui.isCoach=true;S.screen='app';S.ctab='squad';saveUI();S._anim=true;render();toast("Coach mode","Full access unlocked")}else{coachPin=prev;toast("Wrong PIN","Ask for the captain PIN")}}).catch(()=>{coachPin=prev;setOnline(false);toast("No server","Can't verify PIN offline")})}
 function toggleAvail(no){const p=P(no);const nv=!(p.available!==false);coachAction('PUT','/api/players/'+no,{available:nv},()=>{p.available=nv;render()})}
-function nudge(no){toast("Reminder sent","Nudged "+shortName(P(no).name).split(' ')[0]+" to log their games")}
+function nudge(no){const p=P(no),first=shortName(p.name).split(' ')[0];const msg="Hi "+first+"! Log your bowling practice scores in the VOX STARS app so we can build the best line-up — every game you log helps the team: "+location.origin;try{window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank")}catch(e){}toast("Opening WhatsApp","Pick "+first+" to send the nudge")}
 function logForThem(no){S.logTarget=no;S.sheet='log';S.scorer='quick';S.entry={score:0,strikes:0,spares:0};S.rolls=[];render()}
 function setStrategy(x){S.strategy=x;coachAction('PUT','/api/settings',{splitStrategy:x},()=>{settings.splitStrategy=x});render()}
 function applySplit(){const t=buildTeams(S.strategy);const a={};['A','B','C'].forEach(k=>t[k].forEach(p=>a[p.no]=k));
