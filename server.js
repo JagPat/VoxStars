@@ -164,8 +164,11 @@ app.post('/api/games/:no/:ts/verify', (req, res) => { if (!gateCoach(req, res)) 
   const p = P(req.params.no); if (!p) return res.status(404).end();
   const g = p.games.find(x => String(x.ts) === String(req.params.ts)); if (!g) return res.status(404).end();
   g.verified = !g.verified; persist(); res.json({ ok: true, verified: g.verified }); });
-app.delete('/api/games/:no/:ts', (req, res) => { if (!gateCoach(req, res)) return;
-  const p = P(req.params.no); if (!p) return res.status(404).end();
+app.delete('/api/games/:no/:ts', (req, res) => {
+  const a = authOf(req); if (!a) return res.status(401).json({ error: 'sign in required' });
+  const no = req.params.no;
+  if (!a.isCoach && Number(a.no) !== Number(no)) return res.status(403).json({ error: 'you can only delete your own games' });
+  const p = P(no); if (!p) return res.status(404).end();
   const before = p.games.length; p.games = p.games.filter(x => String(x.ts) !== String(req.params.ts));
   persist(); res.json({ ok: true, removed: before - p.games.length }); });
 

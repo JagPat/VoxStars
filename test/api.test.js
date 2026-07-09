@@ -32,7 +32,7 @@ async function req(method, path, { body, session, coach } = {}) {
   r = await req('GET', '/api/join?t=' + tok99); d = await J(r); ok(d.ok && d.player.no === 99, 'join link resolves identity');
   r = await req('POST', '/api/claim', { body: { token: tok99, pin: '1234' } }); d = await J(r);
   const s99 = d.session; ok(d.ok && d.no === 99 && d.isCoach === false, 'claim -> player session (99, not coach)');
-  r = await req('POST', '/api/games', { body: { no: 99, score: 150 }, session: s99 }); ok(r.status === 200, 'player logs their OWN game');
+  r = await req('POST', '/api/games', { body: { no: 99, score: 150 }, session: s99 }); d = await J(r); const ts99 = d.game && d.game.ts; ok(r.status === 200, 'player logs their OWN game');
   r = await req('POST', '/api/games', { body: { no: 38, score: 150 }, session: s99 }); ok(r.status === 403, 'player CANNOT log another player (403)');
   r = await req('POST', '/api/games', { body: { no: 99, score: 150 } }); ok(r.status === 401, 'no session -> 401');
   r = await req('POST', '/api/games', { body: { no: 99, score: 999 }, session: s99 }); ok(r.status === 400, 'score > 300 rejected');
@@ -46,8 +46,14 @@ async function req(method, path, { body, session, coach } = {}) {
   console.log('CAPTAIN = COACH BY IDENTITY');
   r = await req('POST', '/api/claim', { body: { token: tok149, pin: '9999' } }); d = await J(r);
   const s149 = d.session; ok(d.ok && d.isCoach === true, 'captain (149) claim -> isCoach true');
-  r = await req('POST', '/api/games', { body: { no: 38, score: 120 }, session: s149 }); ok(r.status === 200, 'captain can log for ANY player');
+  r = await req('POST', '/api/games', { body: { no: 38, score: 120 }, session: s149 }); d = await J(r); const ts38 = d.game && d.game.ts; ok(r.status === 200, 'captain can log for ANY player');
   r = await req('PUT', '/api/players/38', { body: { team: 'A' }, session: s149 }); ok(r.status === 200, 'captain session can do coach actions');
+
+  console.log('DELETE ENFORCEMENT (duplicate removal)');
+  r = await req('DELETE', '/api/games/38/' + ts38, { session: s99 }); ok(r.status === 403, 'player CANNOT delete another player game');
+  r = await req('DELETE', '/api/games/99/' + ts99, { session: s99 }); ok(r.status === 200, 'player deletes their OWN game');
+  r = await req('DELETE', '/api/games/38/' + ts38, { session: s149 }); ok(r.status === 200, 'captain can delete any game');
+  r = await req('DELETE', '/api/games/99/' + ts99); ok(r.status === 401, 'delete without auth -> 401');
 
   console.log('COACH-ONLY ENDPOINTS');
   r = await req('PUT', '/api/players/38', { body: { available: false }, session: s99 }); ok(r.status === 401, 'player session blocked from coach action');
