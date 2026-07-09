@@ -13,6 +13,8 @@ const crypto = require('crypto');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+// Never let a proxy/CDN (e.g. Cloudflare) or browser cache API responses — always serve live data.
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
 const PORT      = process.env.PORT || 3000;
 const DATA_DIR  = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -70,6 +72,20 @@ function persist() {
     .catch(err => console.error('persist error:', err.message));
   return writeChain;
 }
+
+// Daily rotating safety backup on the persistent volume (keeps last 14).
+function autoBackup() {
+  try {
+    const dir = path.join(DATA_DIR, 'backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const day = new Date().toISOString().slice(0, 10);
+    fs.copyFileSync(DATA_FILE, path.join(dir, 'state-' + day + '.json'));
+    const files = fs.readdirSync(dir).filter(f => /^state-.*\.json$/.test(f)).sort();
+    while (files.length > 14) { try { fs.unlinkSync(path.join(dir, files.shift())); } catch (_) {} }
+  } catch (e) { console.error('autoBackup error:', e.message); }
+}
+try { autoBackup(); } catch (_) {}
+setInterval(autoBackup, 24 * 60 * 60 * 1000);
 
 const P = no => state.players.find(p => p.no === Number(no));
 function mkSession(no, isCoach) { const t = newToken(); state.sessions[t] = { no: no == null ? null : Number(no), isCoach: !!isCoach, ts: Date.now() }; persist(); return t; }
@@ -229,8 +245,8 @@ app.post('/api/import', (req, res) => { if (!gateCoach(req, res)) return;
 app.post('/api/reset', (req, res) => { if (!gateCoach(req, res)) return; const keep = state.installId; state = defaultState(); state.installId = keep; persist(); res.json({ ok: true }); });
 
 /* ---------------- static app ---------------- */
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res, fp) => { if (fp.endsWith('.html')) res.set('Cache-Control', 'no-cache'); } }));
+app.get('*', (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
 app.listen(PORT, () => {
   console.log(`VOX STARS Cockpit running on :${PORT}  (data: ${DATA_FILE})`);
