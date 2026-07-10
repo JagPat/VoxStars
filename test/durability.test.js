@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { startServer, expectStartupFailure, api, sleep, tmpDataDir, legacyPinHash } = require('./helpers');
+const SHIM = path.join(__dirname, 'fail-write-once.js');
 
 test('production startup fails without an explicitly configured coach credential', async () => {
   const r = await expectStartupFailure({ NODE_ENV: 'production' });
@@ -18,11 +19,29 @@ test('production startup fails with the known insecure development fallback', as
   assert.match(r.stderr, /COACH_PIN/);
 });
 
+test('production startup fails with a too-weak coach credential', async () => {
+  const r = await expectStartupFailure({ NODE_ENV: 'production', COACH_PIN: 'abc12' });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /COACH_PIN/);
+});
+
 test('production startup succeeds with a strong credential', async () => {
   const srv = await startServer({ env: { NODE_ENV: 'production' } });
   try {
     const r = await api(srv.base)('GET', '/api/health');
     assert.equal(r.status, 200);
+  } finally { await srv.stop(); }
+});
+
+test('valid-JSON-but-structurally-broken state (players:[null]) degrades, not crash', async () => {
+  const dataDir = tmpDataDir();
+  const content = '{"players":[null,{"no":99,"games":[null]}]}';
+  fs.writeFileSync(path.join(dataDir, 'state.json'), content);
+  const srv = await startServer({ dataDir });
+  try {
+    const r = await api(srv.base)('GET', '/api/health');
+    assert.equal(r.status, 503, 'broken shape -> degraded, server still up');
+    assert.equal(fs.readFileSync(path.join(dataDir, 'state.json'), 'utf8'), content, 'file preserved');
   } finally { await srv.stop(); }
 });
 
@@ -83,6 +102,31 @@ test('persistence failure returns an error and does not acknowledge the mutation
     assert.equal(r.status, 200);
     const onDisk = JSON.parse(fs.readFileSync(path.join(srv.dataDir, 'state.json'), 'utf8'));
     assert.equal(onDisk.players.find(p => p.no === 99).games.length, 1, 'acknowledged game is on disk');
+  } finally { await srv.stop(); }
+});
+
+test('concurrent writes with a mid-flight failure: no ack lost, no rejected write persisted', async () => {
+  const sentinel = path.join(tmpDataDir(), 'FAILNOW');
+  const srv = await startServer({ preload: SHIM, env: { VOX_TEST_FAIL_SENTINEL: sentinel } });
+  try {
+    const req = api(srv.base);
+    const cs = (await req('POST', '/api/coach/verify', { body: { pin: srv.coachPin } })).body.session;
+    fs.writeFileSync(sentinel, '1'); // arm: the next atomic write fails once
+    // two concurrent coach writes; whichever grabs the write first fails transiently
+    const [a, b] = await Promise.all([
+      req('POST', '/api/games', { body: { no: 99, score: 111 }, coachSession: cs }),
+      sleep(30).then(() => req('POST', '/api/games', { body: { no: 99, score: 222 }, coachSession: cs })),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    assert.deepEqual(statuses, [200, 503], 'exactly one failed, one succeeded');
+    const ackScore = a.status === 200 ? 111 : 222;
+    const rejScore = a.status === 200 ? 222 : 111;
+    await sleep(150);
+    const disk = JSON.parse(fs.readFileSync(path.join(srv.dataDir, 'state.json'), 'utf8')).players.find(p => p.no === 99).games.map(g => g.score);
+    const mem = (await req('GET', '/api/state')).body.players.find(p => p.no === 99).games.map(g => g.score);
+    assert.ok(disk.includes(ackScore), 'acknowledged (200) write is durably on disk');
+    assert.ok(!disk.includes(rejScore), 'rejected (503) write is NOT persisted');
+    assert.deepEqual([...mem].sort(), [...disk].sort(), 'in-memory state matches disk');
   } finally { await srv.stop(); }
 });
 
@@ -158,11 +202,60 @@ test('coach PIN verification is rate limited', async () => {
   } finally { await srv.stop(); }
 });
 
+test('coach brute force cannot be spoofed past the trusted proxy hop count', async () => {
+  // Forged X-Forwarded-For is ignored beyond the trusted hop, so a rotating
+  // client IP cannot evade the per-IP lockout.
+  const srv = await startServer({ env: { TRUST_PROXY: '1' } });
+  try {
+    const req = api(srv.base);
+    let locked = false;
+    for (let i = 0; i < 15; i++) {
+      // one real proxy hop appends the true client IP; attacker prepends junk
+      const r = await req('POST', '/api/coach/verify', { body: { pin: 'guess' + i }, headers: { 'X-Forwarded-For': '9.9.9.' + i + ', 203.0.113.9' } });
+      if (r.status === 429) { locked = true; break; }
+    }
+    assert.ok(locked, 'rotating forged XFF still hits the per-IP lockout (spoof ignored past 1 hop)');
+  } finally { await srv.stop(); }
+});
+
+test('coach global backstop locks distributed guessing even across many IPs', async () => {
+  const srv = await startServer(); // test mode trusts XFF from loopback -> distinct req.ip per request
+  try {
+    const req = api(srv.base);
+    let locked = false;
+    for (let i = 0; i < 35; i++) {
+      const r = await req('POST', '/api/coach/verify', { body: { pin: 'g' + i }, headers: { 'X-Forwarded-For': '198.51.100.' + i } });
+      if (r.status === 429) { locked = true; break; }
+    }
+    assert.ok(locked, 'global backstop caps total coach-PIN guesses regardless of source IP');
+  } finally { await srv.stop(); }
+});
+
+test('login lockout is per (account+IP): one IP cannot lock the owner on another IP', async () => {
+  const srv = await startServer(); // XFF from loopback is trusted in test mode
+  try {
+    const req = api(srv.base);
+    const cs = (await req('POST', '/api/coach/verify', { body: { pin: srv.coachPin } })).body.session;
+    const tok = (await req('GET', '/api/invites', { coachSession: cs })).body.players.find(p => p.no === 82).token;
+    await req('POST', '/api/claim', { body: { token: tok, pin: '2020' } });
+    // attacker IP burns through the limit against player 82
+    for (let i = 0; i < 6; i++) {
+      await req('POST', '/api/login', { body: { no: 82, pin: '0000' }, headers: { 'X-Forwarded-For': '10.0.0.1' } });
+    }
+    let r = await req('POST', '/api/login', { body: { no: 82, pin: '2020' }, headers: { 'X-Forwarded-For': '10.0.0.1' } });
+    assert.equal(r.status, 429, 'attacker IP is locked for this account');
+    // the real owner on a different IP is unaffected
+    r = await req('POST', '/api/login', { body: { no: 82, pin: '2020' }, headers: { 'X-Forwarded-For': '77.77.77.77' } });
+    assert.equal(r.status, 200, 'owner on a different IP can still log in');
+  } finally { await srv.stop(); }
+});
+
 test('legacy sha256 PIN hashes still verify and are upgraded to scrypt on login', async () => {
   const dataDir = tmpDataDir();
   const salt = 'test-salt-' + Date.now();
+  const legacyTok = 'aaaabbbbccccdddd0000111122223333'; // legacy model kept tokens after claim
   const seeded = {
-    players: [{ no: 99, claimed: true, inviteToken: null, authPin: legacyPinHash('4321', salt),
+    players: [{ no: 99, claimed: true, inviteToken: legacyTok, authPin: legacyPinHash('4321', salt),
       games: [{ score: 150, strikes: 1, spares: 2, date: '2026-01-05', ts: 1767571200000 }] }],
     settings: {}, sessions: {}, matchday: { A: {}, B: {}, C: {} }, installId: 'seeded-install', updatedAt: Date.now(),
   };
@@ -178,6 +271,9 @@ test('legacy sha256 PIN hashes still verify and are upgraded to scrypt on login'
     const p99 = disk.players.find(p => p.no === 99);
     assert.match(p99.authPin, /^scrypt:/, 'hash upgraded to scrypt after successful login');
     assert.ok(p99.games[0].id, 'legacy game was assigned an immutable id on migration');
+    assert.equal(p99.inviteToken, null, 'legacy still-live invite token consumed on migration');
+    const joined = await req('GET', '/api/join?t=' + legacyTok);
+    assert.equal(joined.status, 404, 'legacy claimed invite link no longer works');
     r = await req('POST', '/api/login', { body: { no: 99, pin: '4321' } });
     assert.equal(r.status, 200, 'login still works after the upgrade');
   } finally { await srv.stop(); }

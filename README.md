@@ -83,9 +83,12 @@ git push -u origin main
 ### 4. Set environment variables
 | Key | Value | Notes |
 |-----|-------|-------|
-| `COACH_PIN` | *your secret PIN* | **Required — the container will not start without it.** Pick something strong; known defaults are refused. |
+| `COACH_PIN` | *your secret PIN* | **Required — the container will not start without it.** Must be **at least 6 characters** and not a known default; weak/known values are refused at startup. |
 | `PORT` | `3000` | Optional; matches the exposed port. |
+| `TRUST_PROXY` | `1` | Optional (defaults to `1` in production). Number of proxy hops in front of the app — keep it accurate so clients can't forge their IP (`X-Forwarded-For`) and dodge login/coach rate limits. Set higher only if you add more proxies. |
 | `AUTH_SALT` | *only if you set it before* | Only needed to verify pre-migration player PINs; PINs are re-hashed with per-player salts (scrypt) as players log in. |
+
+> **Run a single instance per data volume.** The store is one JSON file with last-writer-wins semantics, so two app instances sharing the same `/data` volume can overwrite each other. During deploys, let the old container **stop before** the new one starts (avoid overlapping rolling deploys against the same volume).
 
 ### 5. Domain + health check
 - Assign a domain (or use the Coolify-generated URL). Coolify issues HTTPS automatically.
@@ -124,7 +127,8 @@ Coolify rebuilds and redeploys automatically. Practice data on the `/data` volum
 
 - **Read access:** anyone with the URL can *view* the app and the squad's scores (`GET /api/state` is open — a deliberate, documented choice for easy team sharing). **Every write requires sign-in**, and players can only write their own games. To lock viewing down too, add **Basic Auth** in Coolify or put the app behind your network.
 - **Sessions** expire (players ~30 days, coach ~12 h), are stored only as hashes on the server, and are revoked by sign-out, invite reset, restore, and roster reset.
-- **PINs** are stored as per-player salted scrypt hashes; sign-in attempts are rate limited with temporary lockouts (an invite **Reset** by the coach is the recovery path and clears the lockout).
+- **PINs** are stored as per-player salted scrypt hashes. Sign-in is rate limited per (account + IP) so no one can lock a player out by guessing — the real owner with the correct PIN from a different device is never blocked; coach-PIN verification is rate limited per IP plus a global backstop. An invite **Reset** by the coach clears any lockout.
+- **Durable writes** are atomic and fsync'd; a mutation is acknowledged only after it is on disk, and concurrent writes are serialized so a failed save can never lose or leak another request's change.
 - **Durability:** every change is written atomically and acknowledged only after it's on disk — if the volume fails, the API says so instead of pretending it saved.
 - The store is a single JSON file (`/data/state.json`) — perfect for a 15-player squad. It can be swapped for SQLite/Postgres later if the league grows.
 - Roster and prior-season averages are preloaded from the IncrediBowl S2 auction results (VOX STARS). New signings start without data and build their average through practice logs.

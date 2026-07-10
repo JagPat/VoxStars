@@ -192,9 +192,15 @@ async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body
 /* ============ DURABLE OUTBOX (offline-safe score entry) ============ */
 const outbox=createOutbox({storage:localStorage,key:OBK,send:e=>apiSend('POST','/api/games',{no:e.no,score:e.score,strikes:e.strikes,spares:e.spares,date:e.date,clientId:e.clientId})});
 let _flushing=false;
-async function flushOutbox(){if(_flushing||!outbox.size())return;_flushing=true;
-  try{const r=await outbox.flush();
-    if(r.sent.length){setOnline(true);try{await pull()}catch(_){}
+/* only sync entries the current sign-in is allowed to write, so a different
+   user on this device never spams 403s for someone else's queued scores */
+function outboxMine(e){return ui.isCoach||+e.no===+ui.me}
+async function flushOutbox(){if(_flushing||ui.me==null&&!ui.isCoach)return;if(!outbox.list().some(outboxMine))return;_flushing=true;
+  try{const r=await outbox.flush(outboxMine);
+    if(r.sent.length){setOnline(true);
+      /* a queued game that just synced must not keep offering a "delete before sync" Undo */
+      if(S._prevMe&&S._prevMe.queued&&r.sent.some(s=>s.entry.clientId===S._prevMe.clientId))S._prevMe=null;
+      try{await pull()}catch(_){}
       toast("Synced",r.sent.length+" queued game"+(r.sent.length>1?"s":"")+" saved to the team");render()}
   }finally{_flushing=false}}
 
@@ -613,13 +619,23 @@ async function saveLog(){const e=S.entry;if(!(e.score>0)){toast("Enter a score",
     if(q.ok){S._prevMe={no,clientId:q.entry.clientId,queued:true};S.sheet=null;toast("⏳ Queued — not yet synced","Saves automatically when you're back online");render()}
     else{toast("NOT saved","Couldn't reach the server or queue on this device — keep this form open and retry")}}}
 async function undoLog(){const u=S._prevMe;if(!u)return;
-  if(u.queued){outbox.remove(u.clientId);S._prevMe=null;clearTimeout(_tt);S.toast=null;render();toast("Removed","Queued game deleted before syncing");return}
+  if(u.queued){
+    if(outbox.remove(u.clientId)){S._prevMe=null;clearTimeout(_tt);S.toast=null;render();toast("Removed","Queued game deleted before syncing");return}
+    /* it already synced while the toast was up — Undo must delete it on the server, not lie */
+    const p=P(u.no),g=p&&(p.games||[]).find(x=>x.clientId===u.clientId);
+    if(g){try{await apiSend('DELETE','/api/games/'+u.no+'/'+g.id);if(p)p.games=p.games.filter(x=>x.id!==g.id);S._prevMe=null;cacheSave();clearTimeout(_tt);S.toast=null;render();toast("Undone","Game removed from the server");return}catch(e){}}
+    S._prevMe=null;render();toast("Already synced","It saved before you tapped Undo — delete it from My games");return}
   /* the game reached the server: Undo is only real once the server confirms the delete */
   try{await apiSend('DELETE','/api/games/'+u.no+'/'+u.game.id);const p=P(u.no);if(p)p.games=p.games.filter(x=>x.id!==u.game.id);S._prevMe=null;cacheSave();clearTimeout(_tt);S.toast=null;render();toast("Undone","Game removed from the server")}
   catch(e){toast("Undo failed",(e&&e.message)||"It's still saved — delete it from My games when online")}}
 function delQueued(clientId){if(!confirm("Remove this queued game? It hasn't reached the server yet."))return;outbox.remove(clientId);toast("Removed","Queued game deleted");render()}
-async function delMyGame(id){if(!confirm("Delete this game? This can't be undone."))return;const no=ui.me,p=P(no);
-  try{await apiSend('DELETE','/api/games/'+no+'/'+id);p.games=p.games.filter(x=>String(x.id)!==String(id));cacheSave();setOnline(true);toast("Game removed","Your average updated");render()}
+async function delMyGame(id){
+  if(!id||id==='undefined'){toast("Refresh needed","Syncing this game first — try delete again");try{await pull()}catch(_){}render();return}
+  if(!confirm("Delete this game? This can't be undone."))return;const no=ui.me,p=P(no);
+  try{const r=await apiSend('DELETE','/api/games/'+no+'/'+id);
+    if(r&&r.removed>0){p.games=p.games.filter(x=>String(x.id)!==String(id));cacheSave();setOnline(true);toast("Game removed","Your average updated")}
+    else{try{await pull()}catch(_){}toast("Already gone","Refreshed from the server")}
+    render()}
   catch(e){if(e&&e.forbidden){toast("Not allowed","Only your own games")}else if(e&&e.auth){toast("Sign in again","")}else if(e&&e.server){toast("Not removed",e.message||"Server couldn't save — try again")}else{setOnline(false);toast("No server","Reconnect to remove")}}}
 async function saveMyTarget(){const v=+($('#tgtIn')?$('#tgtIn').value:0)||null;const p=P(ui.me);
   try{await apiSend('POST','/api/mytarget',{no:ui.me,target:v});p.target=v;cacheSave();toast("Target set","Chasing "+(v||150)+" now")}
@@ -645,11 +661,15 @@ function setSessScoreInput(no,v){let n=parseInt(String(v).replace(/[^\d]/g,''),1
 function sessNext(){const c=currentTeams();let list=c[S.session.team];if(c.A.length+c.B.length+c.C.length===0)list=players;S.session.idx=Math.min(list.length,S.session.idx+1);render()}
 function sessPrev(){S.session.idx=Math.max(0,S.session.idx-1);render()}
 async function sessSaveAll(){const sc=S.session.scores,date=new Date().toISOString().slice(0,10);let ok=0;const failed={};let lastErr=null;
+  /* one stable clientId per player for this lane, reused across retries so a lost
+     response can never create a duplicate game when the coach taps Save again */
+  const cids=S.session.cids||(S.session.cids={});
   for(const no of Object.keys(sc)){if(!(sc[no]>0))continue;
-    try{const{game}=await apiSend('POST','/api/games',{no:+no,score:sc[no],date,clientId:outbox.newClientId()});P(+no).games.push(game);ok++}
+    const cid=cids[no]||(cids[no]=outbox.newClientId());
+    try{const{game}=await apiSend('POST','/api/games',{no:+no,score:sc[no],date,clientId:cid});P(+no).games.push(game);ok++;delete cids[no]}
     catch(e){failed[no]=sc[no];lastErr=e}}
   cacheSave();const nFail=Object.keys(failed).length;
-  S.session={...S.session,idx:0,scores:failed};
+  S.session={...S.session,idx:0,scores:failed,cids};
   if(nFail){if(lastErr&&!lastErr.status)setOnline(false);
     toast("Partly saved",ok+" saved · "+nFail+" NOT saved — kept on the form, tap Save again")}
   else toast("Lane saved",ok+" scores logged for the squad");

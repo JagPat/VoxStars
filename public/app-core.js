@@ -78,23 +78,26 @@
         if (next.length === list.length) return false;
         return write(next);
       },
-      // retry everything; entries are removed only on server-confirmed success,
-      // failures are kept (never silently discarded) with the last error noted
-      async flush() {
+      // retry entries matching `filter` (default all); entries are removed only
+      // on server-confirmed success, failures are kept (never silently discarded)
+      // with the last error noted, and non-eligible entries are left untouched
+      async flush(filter) {
         if (busy) return { sent: [], kept: [] };
         busy = true;
         try {
-          const pending = read();
-          if (!pending.length) return { sent: [], kept: [] };
-          const sent = [], kept = [];
-          for (const e of pending) {
+          const eligible = read().filter(e => !filter || filter(e));
+          if (!eligible.length) return { sent: [], kept: [] };
+          const sent = [], keptMeta = {};
+          for (const e of eligible) {
             try { const r = await send(e); sent.push({ entry: e, game: r && r.game, duplicate: !!(r && r.duplicate) }); }
-            catch (err) { kept.push(Object.assign({}, e, { tries: (e.tries || 0) + 1, lastError: (err && err.message) || 'network' })); }
+            catch (err) { keptMeta[e.clientId] = { tries: (e.tries || 0) + 1, lastError: (err && err.message) || 'network' }; }
           }
-          const processed = new Set(pending.map(e => e.clientId));
-          const addedMeanwhile = read().filter(e => !processed.has(e.clientId));
-          write(kept.concat(addedMeanwhile));
-          return { sent, kept };
+          const sentIds = new Set(sent.map(s => s.entry.clientId));
+          // re-read so entries queued mid-flush and non-eligible entries survive
+          const next = read().filter(e => !sentIds.has(e.clientId))
+            .map(e => keptMeta[e.clientId] ? Object.assign({}, e, keptMeta[e.clientId]) : e);
+          write(next);
+          return { sent, kept: eligible.filter(e => keptMeta[e.clientId]) };
         } finally { busy = false; }
       },
     };

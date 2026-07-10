@@ -90,6 +90,19 @@ test('remove() takes a queued entry out (Undo before sync)', () => {
   assert.equal(ob.size(), 0);
 });
 
+test('flush(filter) only sends eligible entries and leaves the rest untouched', async () => {
+  const storage = fakeStorage();
+  let sentNos = [];
+  const ob = VoxCore.createOutbox({ storage, key: 'ob', send: async e => { sentNos.push(e.no); return { ok: true, game: { id: 'g' + e.no } }; } });
+  ob.add({ no: 99, score: 100, date: '2026-07-09' }); // current user
+  ob.add({ no: 38, score: 120, date: '2026-07-09' }); // a different user's stranded entry
+  const r = await ob.flush(e => e.no === 99);
+  assert.equal(r.sent.length, 1);
+  assert.deepEqual(sentNos, [99], 'only the eligible entry is attempted (no 403 spam for no 38)');
+  assert.equal(ob.size(), 1, 'the other user\'s entry is preserved');
+  assert.equal(ob.list()[0].no, 38);
+});
+
 test('entries added during a flush are not lost', async () => {
   const storage = fakeStorage();
   let release;

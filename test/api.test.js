@@ -266,14 +266,41 @@ test('match day flow', async () => {
   assert.equal(Object.keys(r.body.matchday.A).length, 0);
 });
 
-test('reset keeps installId and pure coach sessions, revokes player sessions', async () => {
+test('coach-only endpoints reject an authenticated player session (privilege escalation guard)', async () => {
+  const login = await req('POST', '/api/login', { body: { no: 99, pin: '1234' } });
+  const s99 = login.body.session;
+  const cases = [
+    ['POST', '/api/teams', { assignments: { 149: 'A' } }],
+    ['PUT', '/api/settings', { capCr: 20 }],
+    ['POST', '/api/import', { players: [] }],
+    ['POST', '/api/reset', {}],
+    ['POST', '/api/matchday', { team: 'A', no: 149, game: 1, score: 100 }],
+    ['GET', '/api/backup', undefined],
+    ['POST', '/api/restore', { players: [] }],
+    ['GET', '/api/invites', undefined],
+    ['POST', '/api/invites/reset', { no: 99 }],
+    ['POST', '/api/games/99/whatever/verify', {}],
+  ];
+  for (const [m, path, body] of cases) {
+    const r = await req(m, path, { body, session: s99 });
+    assert.equal(r.status, 401, `player session must NOT reach coach endpoint ${m} ${path} (got ${r.status})`);
+  }
+});
+
+test('reset actually wipes practice data, keeps installId + pure coach sessions', async () => {
+  // seed a game so we can prove it is gone after reset
+  let r = await req('POST', '/api/games', { body: { no: 99, score: 133 }, coachSession });
+  assert.equal(r.status, 200);
   const before = await req('GET', '/api/state');
   const iid = before.body.installId;
+  assert.ok(before.body.players.find(p => p.no === 99).games.length > 0, 'game present before reset');
   const login = await req('POST', '/api/login', { body: { no: 99, pin: '1234' } });
-  const r = await req('POST', '/api/reset', { coachSession });
+  r = await req('POST', '/api/reset', { coachSession });
   assert.equal(r.status, 200);
   const after = await req('GET', '/api/state');
   assert.equal(after.body.installId, iid, 'installId stable across deliberate reset');
+  assert.ok(after.body.players.every(p => p.games.length === 0), 'reset clears all games');
+  assert.ok(after.body.players.every(p => p.team === null), 'reset clears team assignments');
   const chkPlayer = await req('POST', '/api/session', { body: { session: login.body.session } });
   assert.equal(chkPlayer.status, 401, 'player session revoked by reset');
   const chkCoach = await req('GET', '/api/invites', { coachSession });

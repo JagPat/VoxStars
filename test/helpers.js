@@ -14,12 +14,22 @@ const SERVER = path.join(__dirname, '..', 'server.js');
 function randomPin() { return 'test-' + crypto.randomBytes(8).toString('hex'); }
 function tmpDataDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'voxstars-test-')); }
 
+// Never let the outer environment silently rewrite a test's configuration:
+// strip every var the server reads before we set the test-only values.
+const CONTROLLED_ENV = ['NODE_ENV', 'DATA_DIR', 'PORT', 'COACH_PIN', 'AUTH_SALT', 'TRUST_PROXY',
+  'VOX_TEST_SESSION_TTL_MS', 'VOX_TEST_FROZEN_NOW'];
+function cleanBaseEnv() {
+  const env = { ...process.env };
+  for (const k of CONTROLLED_ENV) delete env[k];
+  return env;
+}
+
 // Start a server; resolves { base, port, dataDir, coachPin, child, stop, stdout, stderr }.
 function startServer(opts = {}) {
   const dataDir = opts.dataDir || tmpDataDir();
   const coachPin = opts.coachPin !== undefined ? opts.coachPin : randomPin();
   const env = {
-    ...process.env,
+    ...cleanBaseEnv(),
     NODE_ENV: 'test',
     DATA_DIR: dataDir,
     PORT: '0',
@@ -27,7 +37,10 @@ function startServer(opts = {}) {
     ...(opts.env || {}),
   };
   if (coachPin === null) delete env.COACH_PIN;
-  const child = spawn(process.execPath, [SERVER], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const args = [];
+  if (opts.preload) for (const m of [].concat(opts.preload)) { args.push('-r', m); }
+  args.push(SERVER);
+  const child = spawn(process.execPath, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
   const io = { stdout: '', stderr: '' };
   child.stdout.on('data', d => { io.stdout += d; });
   child.stderr.on('data', d => { io.stderr += d; });
@@ -76,7 +89,7 @@ function stopServer(child, dataDir, keepDataDir) {
 function expectStartupFailure(env = {}) {
   const dataDir = tmpDataDir();
   const child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, DATA_DIR: dataDir, PORT: '0', ...env },
+    env: { ...cleanBaseEnv(), DATA_DIR: dataDir, PORT: '0', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const io = { stdout: '', stderr: '' };

@@ -6,7 +6,9 @@
      name + PIN. Players may only write their OWN games. Captain +
      2 VCs and a server-issued coach session carry full access.
    - Sessions expire, are revocable, and are stored hashed.
-   - Writes are atomic and acknowledged only after they hit disk.
+   - Every mutation runs through a single serialized commit() that
+     writes atomically (with fsync) and is acknowledged only after it
+     hits disk; a failed write reverts the in-memory mutation.
    ============================================================ */
 const express = require('express');
 const fs = require('fs');
@@ -23,13 +25,21 @@ const TMP_FILE  = DATA_FILE + '.tmp';
 const LEGACY_SALT = String(process.env.AUTH_SALT || 'vox-stars-dib-s2'); // only for verifying pre-migration PIN hashes
 
 // The coach credential must be explicitly configured in production. The old
-// development fallback is well known, so it is refused there too.
-const INSECURE_COACH_PINS = new Set(['', '2626', '0000', '1111', '1234']);
+// development fallback is well known, so it is refused there too, and a
+// production credential must have some minimum strength.
+const INSECURE_COACH_PINS = new Set(['', '2626', '0000', '1111', '1234', '123456', '000000']);
+const MIN_PROD_COACH_PIN = 6;
 const COACH_PIN = process.env.COACH_PIN != null ? String(process.env.COACH_PIN) : (IS_PROD ? '' : '2626');
-if (IS_PROD && INSECURE_COACH_PINS.has(COACH_PIN)) {
-  console.error('FATAL: COACH_PIN is missing or still a known development default.');
-  console.error('Set a strong COACH_PIN environment variable before starting in production.');
-  process.exit(1);
+if (IS_PROD) {
+  if (INSECURE_COACH_PINS.has(COACH_PIN)) {
+    console.error('FATAL: COACH_PIN is missing or still a known development default.');
+    console.error('Set a strong COACH_PIN environment variable before starting in production.');
+    process.exit(1);
+  }
+  if (COACH_PIN.length < MIN_PROD_COACH_PIN) {
+    console.error(`FATAL: COACH_PIN is too weak — use at least ${MIN_PROD_COACH_PIN} characters in production.`);
+    process.exit(1);
+  }
 }
 const USING_DEV_PIN_FALLBACK = !IS_PROD && process.env.COACH_PIN == null;
 
@@ -41,7 +51,12 @@ const FROZEN_NOW = IS_TEST && process.env.VOX_TEST_FROZEN_NOW ? Number(process.e
 const gameNow = () => FROZEN_NOW ?? Date.now();
 
 const app = express();
-app.set('trust proxy', true); // deployed behind the Coolify proxy
+// Trust only a bounded number of proxy hops so clients cannot forge req.ip via
+// X-Forwarded-For and bypass the rate limiters. Coolify puts one proxy in front.
+const TRUST_PROXY = process.env.TRUST_PROXY !== undefined
+  ? (/^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY)
+  : (IS_PROD ? 1 : 'loopback');
+app.set('trust proxy', TRUST_PROXY);
 app.use(express.json({ limit: '1mb' }));
 // Never let a proxy/CDN (e.g. Cloudflare) or browser cache API responses — always serve live data.
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
@@ -106,20 +121,27 @@ function recordFailure(key, max, windowMs, lockMs) {
   limiter.set(key, e);
 }
 const clearFailures = key => limiter.delete(key);
+// Clear every lockout for a player (per-IP keys included) — the recovery path.
+function clearLoginFailures(no) {
+  const pre = 'login:' + Number(no);
+  for (const k of [...limiter.keys()]) if (k === pre || k.startsWith(pre + ':')) limiter.delete(k);
+}
 function rejectLocked(res, ms) {
   const mins = Math.max(1, Math.ceil(ms / 60000));
   res.status(429).json({ error: `too many attempts — try again in ${mins} min` });
 }
 const MIN15 = 15 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
 const LIMITS = {
-  loginPlayer: { max: 5,  window: MIN15,     lock: MIN15 },
-  loginIp:     { max: 50, window: MIN15,     lock: MIN15 },
-  coachIp:     { max: 10, window: MIN15,     lock: MIN15 },
-  claimIp:     { max: 20, window: 60 * 60 * 1000, lock: MIN15 },
+  loginAcctIp: { max: 5,  window: MIN15, lock: MIN15 }, // wrong PINs from one IP for one account
+  loginIp:     { max: 50, window: MIN15, lock: MIN15 }, // flood protection per IP
+  coachIp:     { max: 10, window: MIN15, lock: MIN15 },
+  coachGlobal: { max: 30, window: MIN15, lock: MIN15 }, // backstop against distributed coach-PIN guessing
+  claimIp:     { max: 20, window: HOUR,  lock: MIN15 },
 };
 setInterval(() => {
   const t = Date.now();
-  for (const [k, e] of limiter) if ((e.lockedUntil || 0) < t && t - e.first > 2 * 60 * 60 * 1000) limiter.delete(k);
+  for (const [k, e] of limiter) if ((e.lockedUntil || 0) < t && t - e.first > 2 * HOUR) limiter.delete(k);
 }, 10 * 60 * 1000).unref();
 
 /* ---------------- state ---------------- */
@@ -147,14 +169,27 @@ function validDate(s) {
   const d = new Date(s + 'T00:00:00Z');
   return !isNaN(d) && d.toISOString().slice(0, 10) === s;
 }
+// Deterministic id for a legacy (pre-id) game so it stays stable across restarts
+// even if the migration write hasn't landed yet.
+function legacyGameId(no, g, idx) {
+  return 'g-' + sha256hex(no + ':' + (g.ts || 0) + ':' + g.score + ':' + (g.date || '') + ':' + idx).slice(0, 24);
+}
 // Normalise a parsed state file into the current shape. Never invents data:
 // it only fills defaults, clamps ranges and assigns missing immutable game ids.
+// Throws on structurally-broken input (caller treats that as corrupt).
 function normalize(s) {
   let changed = false;
-  const byNo = new Map((s.players || []).map(p => [p.no, p]));
+  if (!s || typeof s !== 'object' || !Array.isArray(s.players)) throw new Error('missing players array');
+  // structural anomalies (null/non-object entries) mean the file is not trustworthy —
+  // throw so the caller preserves it and degrades rather than silently rewriting it
+  for (const p of s.players) if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('player entry is not an object');
+  const byNo = new Map(s.players.map(p => [p.no, p]));
   const players = ROSTER_NOS.map(no => {
     const p = byNo.get(no) || {};
-    const games = (Array.isArray(p.games) ? p.games : []).map(g => {
+    if (p.games !== undefined && !Array.isArray(p.games)) throw new Error('player ' + no + ' games is not an array');
+    const rawGames = Array.isArray(p.games) ? p.games : [];
+    for (const g of rawGames) if (!g || typeof g !== 'object' || Array.isArray(g)) throw new Error('player ' + no + ' has a non-object game');
+    const games = rawGames.map((g, idx) => {
       const out = {
         id: (typeof g.id === 'string' && g.id) ? g.id : null,
         clientId: (typeof g.clientId === 'string' && g.clientId) ? g.clientId.slice(0, 64) : undefined,
@@ -164,7 +199,7 @@ function normalize(s) {
         date: g.date, ts: Number(g.ts) || 0,
         verified: !!g.verified, by: g.by === 'coach' ? 'coach' : 'self',
       };
-      if (!out.id) { out.id = crypto.randomUUID(); changed = true; } // legacy games: mint a stable id once
+      if (!out.id) { out.id = legacyGameId(no, out, idx); changed = true; } // legacy games: stable id
       if (!validDate(out.date)) {
         out.date = out.ts ? new Date(out.ts).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
         changed = true;
@@ -173,14 +208,17 @@ function normalize(s) {
       if (out.clientId === undefined) delete out.clientId;
       return out;
     });
+    // invites are single-use: a claimed player never keeps a live token
+    let inviteToken;
+    if (p.claimed) { if (p.inviteToken) changed = true; inviteToken = null; }
+    else if (typeof p.inviteToken === 'string' && p.inviteToken) inviteToken = p.inviteToken;
+    else { changed = true; inviteToken = newToken(); }
     return { no, games, available: p.available !== false, lockIn: !!p.lockIn, lockOut: !!p.lockOut,
       estAvg: (p.estAvg ?? null), team: (['A', 'B', 'C'].includes(p.team) ? p.team : null), pin: !!p.pin,
       target: (p.target ?? null), authPin: (typeof p.authPin === 'string' ? p.authPin : null),
-      inviteToken: (typeof p.inviteToken === 'string' && p.inviteToken) ? p.inviteToken
-        : (p.claimed ? null : (changed = true, newToken())),
-      claimed: !!p.claimed };
+      inviteToken, claimed: !!p.claimed };
   });
-  if ((s.players || []).length !== players.length) changed = true;
+  if (s.players.length !== players.length) changed = true;
   const sessions = {};
   Object.entries(s.sessions || {}).forEach(([k, v]) => {
     // keep only current-format sessions (hashed key + expiry); legacy raw-token
@@ -188,21 +226,21 @@ function normalize(s) {
     if (v && typeof v.expiresAt === 'number' && /^[0-9a-f]{64}$/.test(k)) sessions[k] = v;
     else changed = true;
   });
-  const matchday = s.matchday || { A: {}, B: {}, C: {} };
-  ['A', 'B', 'C'].forEach(k => { matchday[k] = matchday[k] || {}; });
+  const matchday = (s.matchday && typeof s.matchday === 'object') ? s.matchday : { A: {}, B: {}, C: {} };
+  ['A', 'B', 'C'].forEach(k => { if (!matchday[k] || typeof matchday[k] !== 'object') matchday[k] = {}; });
   return {
     changed,
     state: {
       players,
-      settings: Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 }, s.settings || {}),
+      settings: Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 }, (s.settings && typeof s.settings === 'object') ? s.settings : {}),
       sessions, matchday,
-      installId: s.installId || newToken(),
+      installId: (typeof s.installId === 'string' && s.installId) ? s.installId : newToken(),
       updatedAt: Number(s.updatedAt) || Date.now(),
     },
   };
 }
 // First run: no file -> create a fresh state (atomically).
-// Unreadable or corrupt file -> DEGRADED mode; never overwrite it.
+// Unreadable, corrupt, or structurally-broken file -> DEGRADED; never overwrite it.
 function loadState() {
   let raw;
   try { raw = fs.readFileSync(DATA_FILE, 'utf8'); }
@@ -217,56 +255,75 @@ function loadState() {
     return null;
   }
   let parsed;
-  try {
-    parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.players)) throw new Error('unexpected shape');
-  } catch (e) {
-    enterDegraded('state file is corrupt or has an unexpected shape — refusing to overwrite it');
-    return null;
+  try { parsed = JSON.parse(raw); }
+  catch (e) { enterDegraded('state file is not valid JSON — refusing to overwrite it'); return null; }
+  let normalized;
+  try { normalized = normalize(parsed); }
+  catch (e) { enterDegraded('state file has an unexpected/corrupt shape (' + e.message + ') — refusing to overwrite it'); return null; }
+  if (normalized.changed) {
+    // migrate on disk; deterministic ids mean a failed write still yields the
+    // same ids next boot, so we never serve unstable identifiers.
+    writeFileAtomic(JSON.stringify(normalized.state))
+      .catch(err => console.error('migration persist failed (will retry on next write):', err.message));
   }
-  const { state: s, changed } = normalize(parsed);
-  if (changed) persistState(s).catch(err => console.error('migration persist failed:', err.message));
-  return s;
+  return normalized.state;
 }
 
-let writeChain = Promise.resolve();
-function persistState(s) {
-  s.updatedAt = Date.now();
-  const snapshot = JSON.stringify(s);
-  const run = writeChain.then(async () => {
-    await fs.promises.writeFile(TMP_FILE, snapshot);
-    await fs.promises.rename(TMP_FILE, DATA_FILE);
-  });
-  writeChain = run.catch(() => {}); // keep the chain alive; the caller sees the failure
-  return run;
+// Atomic durable write: tmp file -> fsync -> rename -> fsync(dir).
+async function writeFileAtomic(snapshot) {
+  const fh = await fs.promises.open(TMP_FILE, 'w');
+  try { await fh.writeFile(snapshot); await fh.sync(); } finally { await fh.close(); }
+  await fs.promises.rename(TMP_FILE, DATA_FILE);
+  try { const dh = await fs.promises.open(DATA_DIR, 'r'); try { await dh.sync(); } finally { await dh.close(); } }
+  catch (_) { /* some filesystems reject directory fsync; the rename is still atomic */ }
 }
-function persist() {
-  if (degraded) return Promise.reject(new Error('server is in protected (degraded) mode'));
-  return persistState(state);
-}
+
+let state = loadState();
+
 // A failed write means the in-memory mutation was never acknowledged; reload the
-// last durably-written state so the mutation can't be flushed later by accident.
+// last durably-written state so it can't be flushed later by accident.
 function revertToDisk() {
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    if (!parsed || !Array.isArray(parsed.players)) throw new Error('unexpected shape');
     state = normalize(parsed).state;
   } catch (e) {
     enterDegraded('a save failed and the state file could not be re-read (' + e.message + ')');
   }
 }
-// Acknowledge a mutation only after the atomic write completed.
-async function saveAndReply(res, payload) {
-  try { await persist(); }
+
+// Single serialized mutation pipeline. `apply` mutates `state` and returns a
+// value; it runs only after the previous mutation's write fully settled, so no
+// two uncommitted mutations ever share state. On write failure the mutation is
+// reverted out of memory before the next one runs.
+// IMPORTANT: revertToDisk() replaces `state` with fresh objects, so `apply`
+// closures must re-fetch players/games from the CURRENT state (via P()) rather
+// than close over references captured before commit() ran.
+let commitChain = Promise.resolve();
+function commit(apply) {
+  const run = commitChain.then(async () => {
+    if (degraded) { const e = new Error('server is in protected (degraded) mode'); e.degraded = true; throw e; }
+    const result = apply();
+    state.updatedAt = Date.now();
+    const snapshot = JSON.stringify(state);
+    try { await writeFileAtomic(snapshot); }
+    catch (e) { revertToDisk(); const err = new Error('persist failed: ' + e.message); err.persistFailed = true; throw err; }
+    return result;
+  });
+  commitChain = run.then(() => {}, () => {}); // keep the chain alive regardless of outcome
+  return run;
+}
+// Run a mutation and reply only after it is durably on disk.
+async function saveAndReply(res, apply, payload) {
+  let result;
+  try { result = await commit(apply); }
   catch (e) {
+    if (e.degraded) return res.status(503).json({ error: 'server is in protected mode', degraded: true });
+    if (e.httpStatus) return res.status(e.httpStatus).json({ error: e.message }); // apply chose to reject (no write happened)
     console.error('persist failed:', e.message);
-    revertToDisk();
     return res.status(503).json({ error: 'could not save — the change was NOT applied, try again' });
   }
-  res.json(typeof payload === 'function' ? payload() : payload);
+  res.json(typeof payload === 'function' ? payload(result) : payload);
 }
-
-let state = loadState();
 
 // Daily rotating safety backup on the persistent volume (keeps last 14).
 // Skipped in degraded mode so a corrupt file can never overwrite a good backup.
@@ -282,7 +339,7 @@ function autoBackup() {
   } catch (e) { console.error('autoBackup error:', e.message); }
 }
 try { autoBackup(); } catch (_) {}
-setInterval(autoBackup, 24 * 60 * 60 * 1000);
+setInterval(autoBackup, 24 * HOUR);
 
 /* ---------------- sessions ---------------- */
 const P = no => state.players.find(p => p.no === Number(no));
@@ -301,7 +358,7 @@ function sessionOf(token) {
   const key = sha256hex(token);
   const s = state.sessions[key];
   if (!s) return null;
-  if (s.expiresAt <= Date.now()) { delete state.sessions[key]; return null; }
+  if (s.expiresAt <= Date.now()) return null; // expired: rejected (pruned lazily by the interval/commit)
   return s;
 }
 function pruneSessions() {
@@ -318,8 +375,10 @@ function revokeAllPlayerBoundSessions() {
 }
 setInterval(() => {
   if (degraded || !state) return;
-  if (pruneSessions() > 0) persist().catch(() => {});
-}, 60 * 60 * 1000).unref();
+  let any = false;
+  for (const k of Object.keys(state.sessions)) if (state.sessions[k].expiresAt <= Date.now()) { any = true; break; }
+  if (any) commit(() => pruneSessions()).catch(() => {});
+}, HOUR).unref();
 
 // who is making this request? returns { no, isCoach } or null
 function authOf(req) {
@@ -365,33 +424,42 @@ app.post('/api/claim', async (req, res) => {
     return res.status(404).json({ error: 'invalid or already-used invite' });
   }
   if (!/^\d{4}$/.test(String(pin || ''))) return res.status(400).json({ error: 'PIN must be 4 digits' });
-  p.authPin = hashPin(pin);
-  p.claimed = true;
-  p.inviteToken = null;              // consume the invite — single use
-  revokePlayerSessions(p.no);        // identity (re)claimed: older sessions die
-  clearFailures('login:' + p.no);    // a fresh claim is the recovery path from a lockout
-  const session = mkSession(p.no, isCoachNo(p.no));
-  await saveAndReply(res, { ok: true, session, no: p.no, isCoach: isCoachNo(p.no) });
+  const no = p.no;
+  await saveAndReply(res, () => {
+    const cur = state.players.find(x => x.inviteToken && x.inviteToken === t); // re-fetch after any revert
+    if (!cur) { const e = new Error('invalid or already-used invite'); e.httpStatus = 404; throw e; } // raced claim
+    cur.authPin = hashPin(pin);
+    cur.claimed = true;
+    cur.inviteToken = null;              // consume the invite — single use
+    revokePlayerSessions(cur.no);        // identity (re)claimed: older sessions die
+    clearLoginFailures(cur.no);          // a fresh claim is the recovery path from a lockout
+    return { session: mkSession(cur.no, isCoachNo(cur.no)) };
+  }, r => ({ ok: true, session: r.session, no, isCoach: isCoachNo(no) }));
 });
-// Sign in on a new device with name (no) + PIN
+// Sign in on a new device with name (no) + PIN.
+// Throttling never denies the correct PIN — only repeated wrong guesses from an
+// IP are locked, so no one can lock a player out by guessing.
 app.post('/api/login', async (req, res) => {
   const { no, pin } = req.body || {};
-  const pKey = 'login:' + Number(no), ipKey = 'loginip:' + req.ip;
-  const lockMs = Math.max(lockedFor(pKey), lockedFor(ipKey));
+  const acctIpKey = 'login:' + Number(no) + ':' + req.ip, ipKey = 'loginip:' + req.ip;
+  const lockMs = Math.max(lockedFor(acctIpKey), lockedFor(ipKey));
   if (lockMs) return rejectLocked(res, lockMs);
   const p = P(no);
   const fail = (msg) => {
-    recordFailure(pKey, LIMITS.loginPlayer.max, LIMITS.loginPlayer.window, LIMITS.loginPlayer.lock);
+    recordFailure(acctIpKey, LIMITS.loginAcctIp.max, LIMITS.loginAcctIp.window, LIMITS.loginAcctIp.lock);
     recordFailure(ipKey, LIMITS.loginIp.max, LIMITS.loginIp.window, LIMITS.loginIp.lock);
     res.status(401).json({ error: msg });
   };
   if (!p || !p.authPin) return fail('no PIN yet — open your invite link first');
   const v = verifyPin(pin, p.authPin);
   if (!v.ok) return fail('wrong PIN');
-  clearFailures(pKey);
-  if (v.upgrade) p.authPin = hashPin(pin); // migrate legacy hash to scrypt on successful login
-  const session = mkSession(p.no, isCoachNo(p.no));
-  await saveAndReply(res, { ok: true, session, no: p.no, isCoach: isCoachNo(p.no) });
+  clearFailures(acctIpKey);
+  const no2 = p.no;
+  await saveAndReply(res, () => {
+    const cur = P(no2); // re-fetch after any revert
+    if (v.upgrade && cur) cur.authPin = hashPin(pin); // migrate legacy hash to scrypt on successful login
+    return { session: mkSession(no2, isCoachNo(no2)) };
+  }, r => ({ ok: true, session: r.session, no: no2, isCoach: isCoachNo(no2) }));
 });
 // Validate a stored session on boot
 app.post('/api/session', (req, res) => {
@@ -401,23 +469,24 @@ app.post('/api/session', (req, res) => {
 });
 // Revoke the sessions presented on this request (sign out)
 app.post('/api/logout', async (req, res) => {
-  [req.get('x-session'), req.get('x-coach-session'), (req.body || {}).session].forEach(t => {
-    if (t && typeof t === 'string') delete state.sessions[sha256hex(t)];
-  });
-  await saveAndReply(res, { ok: true });
+  const tokens = [req.get('x-session'), req.get('x-coach-session'), (req.body || {}).session];
+  await saveAndReply(res, () => {
+    tokens.forEach(t => { if (t && typeof t === 'string') delete state.sessions[sha256hex(t)]; });
+  }, { ok: true });
 });
 // Coach PIN -> issues an expiring coach session (backup unlock; rate limited).
 // The raw PIN is verified once here and never stored or echoed back.
 app.post('/api/coach/verify', async (req, res) => {
   const ipKey = 'coach:' + req.ip;
-  const lockMs = lockedFor(ipKey);
+  const lockMs = Math.max(lockedFor(ipKey), lockedFor('coachglobal'));
   if (lockMs) return rejectLocked(res, lockMs);
   if (!COACH_PIN || !safeEq(String((req.body || {}).pin || ''), COACH_PIN)) {
     recordFailure(ipKey, LIMITS.coachIp.max, LIMITS.coachIp.window, LIMITS.coachIp.lock);
+    recordFailure('coachglobal', LIMITS.coachGlobal.max, LIMITS.coachGlobal.window, LIMITS.coachGlobal.lock);
     return res.status(401).json({ ok: false, error: 'wrong coach PIN' });
   }
-  const session = mkSession(null, true);
-  await saveAndReply(res, { ok: true, session });
+  clearFailures(ipKey);
+  await saveAndReply(res, () => ({ session: mkSession(null, true) }), r => ({ ok: true, session: r.session }));
 });
 // Coach: per-player invite tokens (frontend builds the shareable link).
 // token is null once the invite has been claimed (single-use).
@@ -429,11 +498,14 @@ app.get('/api/invites', (req, res) => {
 // the PIN, revokes every session for that player, and clears any login lockout.
 app.post('/api/invites/reset', async (req, res) => {
   if (!gateCoach(req, res)) return;
-  const p = P((req.body || {}).no); if (!p) return res.status(404).json({ error: 'unknown player' });
-  p.inviteToken = newToken(); p.claimed = false; p.authPin = null;
-  revokePlayerSessions(p.no);
-  clearFailures('login:' + p.no);
-  await saveAndReply(res, () => ({ ok: true, token: p.inviteToken }));
+  const no = Number((req.body || {}).no); if (!P(no)) return res.status(404).json({ error: 'unknown player' });
+  await saveAndReply(res, () => {
+    const cur = P(no); if (!cur) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
+    cur.inviteToken = newToken(); cur.claimed = false; cur.authPin = null;
+    revokePlayerSessions(no);
+    clearLoginFailures(no);
+    return { token: cur.inviteToken };
+  }, r => ({ ok: true, token: r.token }));
 });
 
 /* ---------------- API ---------------- */
@@ -457,21 +529,22 @@ app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
   const b = req.body || {};
   const err = validateBackup(b);
   if (err) return res.status(400).json({ error: 'not a valid backup: ' + err });
-  const byNo = new Map(b.players.map(p => [Number(p.no), p]));
-  state.players = ROSTER_NOS.map(no => {
-    const bk = byNo.get(no); const cur = P(no);
-    if (!bk) return cur || blankPlayer(no);
-    return { no, games: (bk.games || []).map(cleanGame), available: bk.available !== false, lockIn: !!bk.lockIn, lockOut: !!bk.lockOut,
-      estAvg: bk.estAvg ?? null, team: bk.team ?? null, pin: !!bk.pin, target: bk.target ?? null,
-      authPin: bk.authPin ?? (cur && cur.authPin) ?? null,
-      inviteToken: bk.inviteToken !== undefined ? bk.inviteToken : ((cur && cur.inviteToken) || newToken()),
-      claimed: !!bk.claimed };
-  });
-  if (b.settings) applySettings(b.settings);
-  if (b.matchday) state.matchday = cleanMatchday(b.matchday);
-  // restored PINs/identities replace the live ones: player-bound sessions die
-  revokeAllPlayerBoundSessions();
-  await saveAndReply(res, { ok: true, restored: b.players.length });
+  await saveAndReply(res, () => {
+    const byNo = new Map(b.players.map(p => [Number(p.no), p]));
+    state.players = ROSTER_NOS.map(no => {
+      const bk = byNo.get(no); const cur = P(no);
+      if (!bk) return cur || blankPlayer(no);
+      return { no, games: (bk.games || []).map((g, i) => cleanGame(g, no, i)), available: bk.available !== false, lockIn: !!bk.lockIn, lockOut: !!bk.lockOut,
+        estAvg: bk.estAvg ?? null, team: bk.team ?? null, pin: !!bk.pin, target: bk.target ?? null,
+        authPin: bk.authPin ?? (cur && cur.authPin) ?? null,
+        // single-use invites: never resurrect a token for an already-claimed player
+        inviteToken: bk.claimed ? null : (bk.inviteToken !== undefined ? bk.inviteToken : ((cur && cur.inviteToken) || newToken())),
+        claimed: !!bk.claimed };
+    });
+    if (b.settings) applySettings(b.settings);
+    if (b.matchday) state.matchday = cleanMatchday(b.matchday);
+    revokeAllPlayerBoundSessions(); // restored PINs/identities replace live ones
+  }, { ok: true, restored: b.players.length });
 });
 
 // Log a game — must be signed in; a player may only log their OWN games; coach may log for anyone.
@@ -487,66 +560,85 @@ app.post('/api/games', async (req, res) => {
   if (!(Number.isInteger(sc) && sc >= 0 && sc <= 300)) return res.status(400).json({ error: 'score must be a whole number 0–300' });
   if (date !== undefined && date !== null && date !== '' && !validDate(String(date))) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
   if (clientId !== undefined && clientId !== null && !ID_RE.test(String(clientId))) return res.status(400).json({ error: 'bad clientId' });
-  if (clientId) {
-    const existing = p.games.find(g => g.clientId === String(clientId));
-    if (existing) return res.json({ ok: true, game: existing, duplicate: true });
-  }
-  const game = { id: crypto.randomUUID(),
-    score: sc, strikes: Math.max(0, Math.min(12, Math.round(Number(strikes) || 0))), spares: Math.max(0, Math.min(10, Math.round(Number(spares) || 0))),
-    date: (date && validDate(String(date))) ? String(date) : new Date().toISOString().slice(0, 10),
-    ts: gameNow(), verified: !!a.isCoach, by: a.isCoach ? 'coach' : 'self' };
-  if (clientId) game.clientId = String(clientId);
-  p.games.push(game);
-  await saveAndReply(res, { ok: true, game });
+  const isCoachWrite = a.isCoach;
+  await saveAndReply(res, () => {
+    const cur = P(no); if (!cur) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; } // re-fetch after any revert
+    if (clientId) {
+      const existing = cur.games.find(g => g.clientId === String(clientId));
+      if (existing) return { game: existing, duplicate: true };
+    }
+    const game = { id: crypto.randomUUID(),
+      score: sc, strikes: Math.max(0, Math.min(12, Math.round(Number(strikes) || 0))), spares: Math.max(0, Math.min(10, Math.round(Number(spares) || 0))),
+      date: (date && validDate(String(date))) ? String(date) : new Date().toISOString().slice(0, 10),
+      ts: gameNow(), verified: !!isCoachWrite, by: isCoachWrite ? 'coach' : 'self' };
+    if (clientId) game.clientId = String(clientId);
+    cur.games.push(game);
+    return { game };
+  }, r => (r.duplicate ? { ok: true, game: r.game, duplicate: true } : { ok: true, game: r.game }));
 });
 app.post('/api/games/:no/:id/verify', async (req, res) => { if (!gateCoach(req, res)) return;
   const p = P(req.params.no); if (!p) return res.status(404).json({ error: 'unknown player' });
-  const g = p.games.find(x => String(x.id) === String(req.params.id)); if (!g) return res.status(404).json({ error: 'unknown game' });
-  g.verified = !g.verified;
-  await saveAndReply(res, () => ({ ok: true, verified: g.verified })); });
+  if (!p.games.some(x => String(x.id) === String(req.params.id))) return res.status(404).json({ error: 'unknown game' });
+  let flipped;
+  await saveAndReply(res, () => {
+    const cur = P(req.params.no); const g = cur && cur.games.find(x => String(x.id) === String(req.params.id));
+    if (!g) { const e = new Error('unknown game'); e.httpStatus = 404; throw e; }
+    g.verified = !g.verified; flipped = g.verified;
+  }, () => ({ ok: true, verified: flipped })); });
 app.delete('/api/games/:no/:id', async (req, res) => {
   const a = authOf(req); if (!a) return res.status(401).json({ error: 'sign in required' });
   const no = req.params.no;
   if (!a.isCoach && Number(a.no) !== Number(no)) return res.status(403).json({ error: 'you can only delete your own games' });
-  const p = P(no); if (!p) return res.status(404).json({ error: 'unknown player' });
-  const before = p.games.length;
-  p.games = p.games.filter(x => String(x.id) !== String(req.params.id));
-  await saveAndReply(res, { ok: true, removed: before - p.games.length }); });
+  if (!P(no)) return res.status(404).json({ error: 'unknown player' });
+  await saveAndReply(res, () => {
+    const cur = P(no); if (!cur) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
+    const before = cur.games.length;
+    cur.games = cur.games.filter(x => String(x.id) !== String(req.params.id));
+    return { removed: before - cur.games.length };
+  }, r => ({ ok: true, removed: r.removed })); });
 
 app.put('/api/players/:no', async (req, res) => { if (!gateCoach(req, res)) return;
-  const p = P(req.params.no); if (!p) return res.status(404).json({ error: 'unknown player' }); const b = req.body || {};
-  if (b.available !== undefined) p.available = !!b.available;
-  if (b.lockIn   !== undefined) p.lockIn   = !!b.lockIn;
-  if (b.lockOut  !== undefined) p.lockOut  = !!b.lockOut;
-  if (b.estAvg   !== undefined) p.estAvg   = (b.estAvg === null || b.estAvg === '') ? null : Number(b.estAvg);
-  if (b.team     !== undefined) p.team     = (['A', 'B', 'C'].includes(b.team)) ? b.team : null;
-  if (b.pin      !== undefined) p.pin      = !!b.pin;
-  if (b.target   !== undefined) p.target   = (b.target === null || b.target === '') ? null : Number(b.target);
-  await saveAndReply(res, () => ({ ok: true, player: pub(p) })); });
+  if (!P(req.params.no)) return res.status(404).json({ error: 'unknown player' }); const b = req.body || {};
+  let pubOut;
+  await saveAndReply(res, () => {
+    const p = P(req.params.no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
+    if (b.available !== undefined) p.available = !!b.available;
+    if (b.lockIn   !== undefined) p.lockIn   = !!b.lockIn;
+    if (b.lockOut  !== undefined) p.lockOut  = !!b.lockOut;
+    if (b.estAvg   !== undefined) p.estAvg   = (b.estAvg === null || b.estAvg === '') ? null : Number(b.estAvg);
+    if (b.team     !== undefined) p.team     = (['A', 'B', 'C'].includes(b.team)) ? b.team : null;
+    if (b.pin      !== undefined) p.pin      = !!b.pin;
+    if (b.target   !== undefined) p.target   = (b.target === null || b.target === '') ? null : Number(b.target);
+    pubOut = pub(p);
+  }, () => ({ ok: true, player: pubOut })); });
 
 // A player sets their OWN target (or a coach for anyone)
 app.post('/api/mytarget', async (req, res) => {
   const a = authOf(req); if (!a) return res.status(401).json({ error: 'sign in required' });
-  const { no, target } = req.body || {}; const p = P(no); if (!p) return res.status(404).json({ error: 'unknown player' });
+  const { no, target } = req.body || {}; if (!P(no)) return res.status(404).json({ error: 'unknown player' });
   if (!a.isCoach && Number(a.no) !== Number(no)) return res.status(403).json({ error: 'not your target' });
-  p.target = (target === null || target === '') ? null : Number(target);
-  await saveAndReply(res, () => ({ ok: true, target: p.target }));
+  let out;
+  await saveAndReply(res, () => {
+    const p = P(no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
+    p.target = (target === null || target === '') ? null : Number(target); out = p.target;
+  }, () => ({ ok: true, target: out }));
 });
 
 app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
   const a = (req.body && req.body.assignments) || {};
-  Object.keys(a).forEach(no => { const p = P(no); if (p) p.team = ['A', 'B', 'C'].includes(a[no]) ? a[no] : null; });
-  await saveAndReply(res, { ok: true }); });
+  await saveAndReply(res, () => {
+    Object.keys(a).forEach(no => { const p = P(no); if (p) p.team = ['A', 'B', 'C'].includes(a[no]) ? a[no] : null; });
+  }, { ok: true }); });
 function applySettings(b) {
   ['defaultAvg', 'capCr', 'teamSize', 'teamsCount'].forEach(k => {
-    if (b[k] !== undefined && Number.isFinite(Number(b[k]))) state.settings[k] = Number(b[k]);
+    if (b[k] !== undefined && b[k] !== null && b[k] !== '' && Number.isFinite(Number(b[k]))) state.settings[k] = Number(b[k]);
   });
   if (['powerhouse', 'balanced', 'tiered'].includes(b.splitStrategy)) state.settings.splitStrategy = b.splitStrategy;
   if (['A', 'B', 'C'].includes(b.powerTeam)) state.settings.powerTeam = b.powerTeam;
 }
 app.put('/api/settings', async (req, res) => { if (!gateCoach(req, res)) return;
-  applySettings(req.body || {});
-  await saveAndReply(res, () => ({ ok: true, settings: state.settings })); });
+  const b = req.body || {};
+  await saveAndReply(res, () => applySettings(b), () => ({ ok: true, settings: state.settings })); });
 app.post('/api/import', async (req, res) => { if (!gateCoach(req, res)) return;
   const incoming = (req.body && req.body.players) || [];
   if (!Array.isArray(incoming)) return res.status(400).json({ error: 'players must be an array' });
@@ -554,31 +646,35 @@ app.post('/api/import', async (req, res) => { if (!gateCoach(req, res)) return;
     const err = validateImportPlayer(ip);
     if (err) return res.status(400).json({ error: 'not a valid import: ' + err });
   }
-  let added = 0;
-  incoming.forEach(ip => { const p = P(ip.no); if (!p) return; (ip.games || []).forEach(g => {
-    const dup = p.games.some(x => (g.id && x.id === g.id) || (g.clientId && x.clientId === g.clientId) ||
-      (x.date === g.date && x.score === g.score && x.strikes === g.strikes));
-    if (!dup) { p.games.push(cleanGame(g)); added++; } }); });
-  await saveAndReply(res, { ok: true, added }); });
+  await saveAndReply(res, () => {
+    let added = 0;
+    incoming.forEach(ip => { const p = P(ip.no); if (!p) return; (ip.games || []).forEach((g, i) => {
+      const dup = p.games.some(x => (g.id && x.id === g.id) || (g.clientId && x.clientId === g.clientId) ||
+        (x.date === g.date && x.score === g.score && x.strikes === g.strikes));
+      if (!dup) { p.games.push(cleanGame(g, ip.no, i)); added++; } }); });
+    return { added };
+  }, r => ({ ok: true, added: r.added })); });
 app.post('/api/reset', async (req, res) => { if (!gateCoach(req, res)) return;
-  const keepId = state.installId;
-  const coachSessions = {};
-  Object.entries(state.sessions).forEach(([k, s]) => { if (s.no == null && s.isCoach) coachSessions[k] = s; });
-  state = defaultState(); state.installId = keepId; state.sessions = coachSessions;
-  await saveAndReply(res, { ok: true }); });
+  await saveAndReply(res, () => {
+    const keepId = state.installId;
+    const coachSessions = {};
+    Object.entries(state.sessions).forEach(([k, s]) => { if (s.no == null && s.isCoach) coachSessions[k] = s; });
+    state = defaultState(); state.installId = keepId; state.sessions = coachSessions;
+  }, { ok: true }); });
 // Match day: coach records each sub-team's tournament games (2 per player), kept separate from practice.
 app.post('/api/matchday', async (req, res) => { if (!gateCoach(req, res)) return;
   const b = req.body || {}, team = b.team;
   if (!['A', 'B', 'C'].includes(team)) return res.status(400).json({ error: 'team must be A/B/C' });
-  state.matchday[team] = state.matchday[team] || {};
-  if (b.clear) { state.matchday[team] = {}; return saveAndReply(res, () => ({ ok: true, matchday: state.matchday })); }
+  if (b.clear) return saveAndReply(res, () => { state.matchday[team] = {}; }, () => ({ ok: true, matchday: state.matchday }));
   const no = Number(b.no), game = Number(b.game);
   if (!ROSTER_NOS.includes(no) || ![1, 2].includes(game)) return res.status(400).json({ error: 'bad no/game' });
   const score = Math.max(0, Math.min(300, parseInt(b.score, 10) || 0));
   const strikes = Math.max(0, Math.min(12, parseInt(b.strikes, 10) || 0));
   const spares = Math.max(0, Math.min(10, parseInt(b.spares, 10) || 0));
-  state.matchday[team][no + '-' + game] = { score, strikes, spares };
-  await saveAndReply(res, () => ({ ok: true, matchday: state.matchday }));
+  await saveAndReply(res, () => {
+    state.matchday[team] = state.matchday[team] || {};
+    state.matchday[team][no + '-' + game] = { score, strikes, spares };
+  }, () => ({ ok: true, matchday: state.matchday }));
 });
 
 /* ---------------- backup / import validation ----------------
@@ -602,10 +698,10 @@ function gameError(g) {
   if (g.by !== undefined && !['coach', 'self'].includes(g.by)) return 'bad "by" field';
   return null;
 }
-// copy only known-safe fields; assign an immutable id when missing (legacy backups)
-function cleanGame(g) {
+// copy only known-safe fields; assign a stable immutable id when missing (legacy backups)
+function cleanGame(g, no, idx) {
   const out = {
-    id: (g.id && ID_RE.test(String(g.id))) ? String(g.id) : crypto.randomUUID(),
+    id: (g.id && ID_RE.test(String(g.id))) ? String(g.id) : legacyGameId(no, g, idx || 0),
     score: g.score,
     strikes: intIn(g.strikes, 0, 12) ? g.strikes : 0,
     spares: intIn(g.spares, 0, 10) ? g.spares : 0,
@@ -677,6 +773,7 @@ function cleanMatchday(md) {
   const out = { A: {}, B: {}, C: {} };
   ['A', 'B', 'C'].forEach(team => {
     Object.keys(md[team] || {}).forEach(key => {
+      if (!/^\d+-(1|2)$/.test(key)) return;
       const e = md[team][key];
       out[team][key] = { score: e.score, strikes: intIn(e.strikes, 0, 12) ? e.strikes : 0, spares: intIn(e.spares, 0, 10) ? e.spares : 0 };
     });
