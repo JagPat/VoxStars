@@ -517,7 +517,9 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, updatedAt: state.updatedAt, installId: state.installId, dataDir: DATA_DIR, onDataVolume: DATA_DIR === '/data' });
 });
 app.get('/api/state', (req, res) => {
-  // read-only: viewing team-mates & rivals is allowed (documented policy). Strip secrets.
+  // Requires any valid player or coach session: signed-in team-mates see the
+  // whole squad; the public / logged-out cannot read scores. Secrets stripped.
+  if (!authOf(req)) return res.status(401).json({ error: 'sign in to view team data' });
   res.json({ players: state.players.map(({ authPin, inviteToken, ...rest }) => rest), settings: state.settings, matchday: state.matchday, updatedAt: state.updatedAt, installId: state.installId });
 });
 

@@ -185,7 +185,9 @@ async function apiSend(m,path,body){const h={'Content-Type':'application/json'};
   if(!r.ok){let msg='';try{msg=(await r.json()).error||''}catch(_){}
     const e=new Error(msg||('error '+r.status));e.status=r.status;e.auth=r.status===401;e.forbidden=r.status===403;e.locked=r.status===429;e.bad=r.status===400;e.server=r.status>=500;throw e}
   return r.json()}
-async function pull(){const d=await apiGet('/api/state');merge(d);setOnline(true);cacheSave()}
+/* /api/state now requires a session — use apiSend so the stored player/coach
+   token travels; before sign-in this 401s and boot falls back to the cache. */
+async function pull(){const d=await apiSend('GET','/api/state');merge(d);setOnline(true);cacheSave()}
 async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body);setOnline(true);ok&&ok(r);cacheSave()}
   catch(e){if(e&&e.auth){toast("Coach access needed","Unlock the cockpit first");openCoachPin()}else if(e&&e.forbidden){toast("Not allowed","That isn't yours to change")}else if(e&&(e.bad||e.locked)){toast("Rejected",e.message||'Invalid request')}else if(e&&e.server){toast("Not saved",e.message||'Server could not save — try again')}else{setOnline(false);toast("No server","Open your Coolify URL / localhost:3000 to save")}}}
 

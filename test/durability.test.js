@@ -91,7 +91,7 @@ test('persistence failure returns an error and does not acknowledge the mutation
     fs.mkdirSync(path.join(srv.dataDir, 'state.json.tmp'));
     let r = await req('POST', '/api/games', { body: { no: 99, score: 222 }, session: s99 });
     assert.equal(r.status, 503, 'failed persistence is a server error, not a success');
-    r = await req('GET', '/api/state');
+    r = await req('GET', '/api/state', { coachSession: cs });
     assert.equal(r.status, 200, 'reads still work — state reverted to last durable copy');
     assert.equal(r.body.players.find(p => p.no === 99).games.length, 0,
       'unacknowledged mutation is discarded from memory');
@@ -123,7 +123,7 @@ test('concurrent writes with a mid-flight failure: no ack lost, no rejected writ
     const rejScore = a.status === 200 ? 222 : 111;
     await sleep(150);
     const disk = JSON.parse(fs.readFileSync(path.join(srv.dataDir, 'state.json'), 'utf8')).players.find(p => p.no === 99).games.map(g => g.score);
-    const mem = (await req('GET', '/api/state')).body.players.find(p => p.no === 99).games.map(g => g.score);
+    const mem = (await req('GET', '/api/state', { coachSession: cs })).body.players.find(p => p.no === 99).games.map(g => g.score);
     assert.ok(disk.includes(ackScore), 'acknowledged (200) write is durably on disk');
     assert.ok(!disk.includes(rejScore), 'rejected (503) write is NOT persisted');
     assert.deepEqual([...mem].sort(), [...disk].sort(), 'in-memory state matches disk');
@@ -142,7 +142,7 @@ test('two games created at the same mocked time keep independent identities', as
     assert.notEqual(g1.id, g2.id, 'ids stay distinct');
     const del = await req('DELETE', '/api/games/99/' + g1.id, { coachSession: cs });
     assert.equal(del.body.removed, 1, 'delete removes exactly the addressed game');
-    const st = await req('GET', '/api/state');
+    const st = await req('GET', '/api/state', { coachSession: cs });
     const games = st.body.players.find(p => p.no === 99).games;
     assert.equal(games.length, 1);
     assert.equal(games[0].id, g2.id, 'the other same-timestamp game survives');
@@ -291,7 +291,7 @@ test('state survives a server restart on the same data dir', async () => {
   srv = await startServer({ dataDir, coachPin: pin });
   try {
     const req2 = api(srv.base);
-    const st = await req2('GET', '/api/state');
+    const st = await req2('GET', '/api/state', { coachSession: cs });
     const games = st.body.players.find(p => p.no === 22).games;
     assert.equal(games.length, 1);
     assert.equal(games[0].id, game.id, 'game id is stable across restarts');

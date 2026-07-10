@@ -75,7 +75,7 @@ test('retried queued submission creates exactly one server game', async () => {
     const r2 = await ob2.flush();
     assert.equal(r2.sent.length, 1);
     assert.equal(r2.sent[0].duplicate, true, 'server recognises the retry');
-    const st = await req('GET', '/api/state');
+    const st = await req('GET', '/api/state', { session: s99 });
     const games = st.body.players.find(p => p.no === 99).games;
     assert.equal(games.length, 1, 'exactly one game despite the retry');
   } finally { await srv.stop(); }
