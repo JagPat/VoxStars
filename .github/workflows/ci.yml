@@ -1,0 +1,53 @@
+name: CI
+
+# Runs the isolated test suite and syntax/audit checks on every PR to main
+# and on pushes to main. The test suite is self-contained — each test spawns
+# its own server on a temporary data dir and random port — so no secrets or
+# services are required.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: check + test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20'] # matches package.json engines: >=18
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies (clean, from lockfile)
+        run: npm ci
+
+      - name: Syntax / static check
+        run: npm run check
+
+      - name: Isolated test suite
+        run: npm test
+
+  audit:
+    name: production dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies (clean, from lockfile)
+        run: npm ci
+      # Fail only on high/critical advisories in production deps so a newly
+      # disclosed transitive low/moderate issue doesn't block unrelated PRs.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
