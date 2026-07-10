@@ -21,14 +21,25 @@ async function inviteFor(no) {
   return r.body.players.find(p => p.no === no).token;
 }
 
-test('basics: health, state shape, secrets stripped', async () => {
+test('basics: health public, state requires a session, secrets stripped', async () => {
   let r = await req('GET', '/api/health');
   assert.equal(r.status, 200);
   assert.equal(r.body.ok, true);
   r = await req('GET', '/api/state');
+  assert.equal(r.status, 401, 'state is not readable without a session');
+  r = await req('GET', '/api/state', { coachSession });
+  assert.equal(r.status, 200);
   assert.equal(r.body.players.length, 15);
   assert.ok(r.body.players.every(p => !('authPin' in p) && !('inviteToken' in p)), 'state strips authPin/inviteToken');
   assert.ok(!('sessions' in r.body), 'state does not expose sessions');
+});
+
+test('a plain player session can read team state', async () => {
+  const tok = await inviteFor(128);
+  const s = (await req('POST', '/api/claim', { body: { token: tok, pin: '3131' } })).body.session;
+  const r = await req('GET', '/api/state', { session: s });
+  assert.equal(r.status, 200, 'signed-in team-mate sees the squad');
+  assert.equal(r.body.players.length, 15);
 });
 
 test('coach auth: session issued, wrong PIN rejected, raw PIN header no longer accepted', async () => {
@@ -104,7 +115,7 @@ test('undo path: server-side delete really removes the game (survives refresh)',
   const id = created.body.game.id;
   const del = await req('DELETE', '/api/games/99/' + id, { session: s99 });
   assert.equal(del.status, 200);
-  const st = await req('GET', '/api/state');
+  const st = await req('GET', '/api/state', { session: s99 });
   const games = st.body.players.find(p => p.no === 99).games;
   assert.ok(!games.some(x => x.id === id), 'deleted game does not come back on refresh');
 });
@@ -119,7 +130,7 @@ test('retried submission with the same clientId creates exactly one game', async
   assert.equal(r2.status, 200);
   assert.equal(r2.body.duplicate, true);
   assert.equal(r2.body.game.id, r1.body.game.id, 'retry returns the same game');
-  const st = await req('GET', '/api/state');
+  const st = await req('GET', '/api/state', { session: s99 });
   const matches = st.body.players.find(p => p.no === 99).games.filter(g => g.clientId === 'outbox-retry-1');
   assert.equal(matches.length, 1, 'exactly one game for the clientId');
   await req('DELETE', '/api/games/99/' + r1.body.game.id, { session: s99 });
@@ -291,13 +302,13 @@ test('reset actually wipes practice data, keeps installId + pure coach sessions'
   // seed a game so we can prove it is gone after reset
   let r = await req('POST', '/api/games', { body: { no: 99, score: 133 }, coachSession });
   assert.equal(r.status, 200);
-  const before = await req('GET', '/api/state');
+  const before = await req('GET', '/api/state', { coachSession });
   const iid = before.body.installId;
   assert.ok(before.body.players.find(p => p.no === 99).games.length > 0, 'game present before reset');
   const login = await req('POST', '/api/login', { body: { no: 99, pin: '1234' } });
   r = await req('POST', '/api/reset', { coachSession });
   assert.equal(r.status, 200);
-  const after = await req('GET', '/api/state');
+  const after = await req('GET', '/api/state', { coachSession });
   assert.equal(after.body.installId, iid, 'installId stable across deliberate reset');
   assert.ok(after.body.players.every(p => p.games.length === 0), 'reset clears all games');
   assert.ok(after.body.players.every(p => p.team === null), 'reset clears team assignments');

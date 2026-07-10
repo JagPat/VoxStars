@@ -125,7 +125,7 @@ Coolify rebuilds and redeploys automatically. Practice data on the `/data` volum
 
 ## Notes & security
 
-- **Read access:** anyone with the URL can *view* the app and the squad's scores (`GET /api/state` is open — a deliberate, documented choice for easy team sharing). **Every write requires sign-in**, and players can only write their own games. To lock viewing down too, add **Basic Auth** in Coolify or put the app behind your network.
+- **Read access:** viewing the squad's scores requires sign-in — `GET /api/state` needs a valid player or coach session, so the public / logged-out can't read team data. Signed-in team-mates still see the whole squad (the team-transparency model is unchanged). **Every write** also requires sign-in, and players can only write their own games. To lock things down further (e.g. hide even the login page), add **Basic Auth** in Coolify or put the app behind your network.
 - **Sessions** expire (players ~30 days, coach ~12 h), are stored only as hashes on the server, and are revoked by sign-out, invite reset, restore, and roster reset.
 - **PINs** are stored as per-player salted scrypt hashes. Sign-in is rate limited per (account + IP) so no one can lock a player out by guessing — the real owner with the correct PIN from a different device is never blocked; coach-PIN verification is rate limited per IP plus a global backstop. An invite **Reset** by the coach clears any lockout.
 - **Durable writes** are atomic and fsync'd; a mutation is acknowledged only after it is on disk, and concurrent writes are serialized so a failed save can never lose or leak another request's change.
@@ -138,7 +138,7 @@ Coolify rebuilds and redeploys automatically. Practice data on the `/data` volum
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/api/health` | — | health check (503 = degraded store) |
-| GET | `/api/state` | — | full team state (secrets stripped; open by design) |
+| GET | `/api/state` | player/coach session | full team state (secrets stripped; sign-in required) |
 | GET | `/api/join?t=` | invite token | resolve a (still unused) invite link |
 | POST | `/api/claim` | invite token | claim identity + set PIN (consumes the invite, issues a session) |
 | POST | `/api/login` | name + PIN | sign in on a new device (rate limited) |
