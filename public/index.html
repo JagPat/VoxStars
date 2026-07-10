@@ -41,7 +41,10 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="app-core.js"></script>
 <script>
+/* shared core: escaping, ten-pin math, durable offline outbox (see app-core.js) */
+const {esc,idAttr,frameState,frameComplete,rollTxt,createOutbox}=window.VoxCore;
 /* ============ REAL ROSTER (VOX STARS, IncrediBowl S2) ============ */
 const ROSTER=[
  {no:149,name:"AR. Jagrut Patel",firm:"Vitan Architects",g:"M",pt:2,lgAvg:89,lgHigh:93,lgM:2,lgStr:null,role:"C"},
@@ -63,11 +66,11 @@ const ROSTER=[
 const LEADS={A:149,B:171,C:175};
 const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Verantes Elites":[145,144,139,126,115,100,94,64,59],"Bharat Blazers":[172,132,120,120,116,93,84],"Durlax Warriors":[150,134,127,120,118,105,102,95],"TWF Tornados":[139,129,124,124,123,120,115,102,92,75],"Koil Krushers":[138,131,124,120,118,115,115,104,75],"Eff.co Wreckers":[130,128,127,122,120,106,90],"Fima Strikers":[140,138,133,126,90,86],"CXO Superboss":[132,131,126,125,111,85,73],"All About Living":[142,127,122,113,112,110],"Dynamic Hunters":[126,126,117,115,113,110,90]};
 const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A",teamSize:5,teamsCount:3};
-const CK="vox_v3_cache",UK="vox_v3_ui",PK="vox_v3_pin",MEK="vox_v3_me",SK="vox_v3_session";
+const CK="vox_v3_cache",UK="vox_v3_ui",MEK="vox_v3_me",SK="vox_v3_session",CSK="vox_v3_coach_session",OBK="vox_v3_outbox";
+try{localStorage.removeItem("vox_v3_pin")}catch(e){} /* never keep the raw coach PIN on the device */
 
 let players=[], settings={...DEFSET}, matchday={A:{},B:{},C:{}}, online=false, lastSync=0;
 let ui={me:null,mode:"player",isCoach:false};
-let coachPin=localStorage.getItem(PK)||"";
 let S={ screen:"login", loginStep:"pick", pickSel:null,
   ptab:"me", ctab:"squad", sheet:null, scorer:"quick",
   entry:{score:0,strikes:0,spares:0}, rolls:[], logTarget:null,
@@ -89,7 +92,6 @@ const P=no=>players.find(p=>p.no===+no);
 const $=s=>document.querySelector(s);
 function initials(n){const a=n.replace(/^(AR\.|ID\.|ER\.|Mr\.|Mrs\.|Ms\.)\s*/i,"").trim().split(/\s+/);return((a[0]||"")[0]||"")+((a[1]||"")[0]||"")}
 function avatarBg(g){return g==="F"?"linear-gradient(135deg,#a869c2,#7d3c98)":"linear-gradient(135deg,#3b6ea5,#274d78)"}
-function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 /* ============ AVERAGES + STATS ============ */
 function pstats(p){const g=p.games||[];let n=g.length,sum=0,high=0,strk=0,spr=0;g.forEach(x=>{sum+=+x.score||0;high=Math.max(high,+x.score||0);strk+=+x.strikes||0;spr+=+x.spares||0});return{n,sum,high,strk,spr}}
@@ -156,26 +158,9 @@ function buildTeams(st){st=st||settings.splitStrategy||"powerhouse";const cap=se
 function currentTeams(){const t={A:[],B:[],C:[],U:[]};players.forEach(p=>{(["A","B","C"].includes(p.team)?t[p.team]:t.U).push(p)});return t}
 function teamsForDisplay(){const c=currentTeams();if(c.A.length+c.B.length+c.C.length<15)return buildTeams(S.strategy);return{A:c.A,B:c.B,C:c.C}}
 
-/* ============ FRAME-BY-FRAME SCORER (ported ten-pin math) ============ */
-function frameState(rolls){let frames=[],i=0,r=rolls.slice();
-  for(let f=0;f<10&&i<r.length;f++){if(f<9){if(r[i]===10){frames.push([10]);i++}else{frames.push(r.slice(i,i+2));i+=Math.min(2,r.length-i)}}else{frames.push(r.slice(i));i=r.length}}
-  let total=0,strikes=0,spares=0;const flat=rolls;
-  for(let f=0,p=0;f<10;f++){const fr=frames[f];if(!fr||fr.length===0)break;
-    if(f<9){if(fr[0]===10){total+=10+(flat[p+1]||0)+(flat[p+2]||0);strikes++;p+=1}
-      else if((fr[0]+(fr[1]||0))===10&&fr.length>=2){total+=10+(flat[p+2]||0);spares++;p+=2}
-      else{total+=(fr[0]||0)+(fr[1]||0);p+=fr.length}}
-    else{total+=fr.reduce((x,y)=>x+y,0);const a0=fr[0],b0=(fr[1]==null?null:fr[1]),c0=(fr[2]==null?null:fr[2]);if(a0===10){strikes++;if(b0===10){strikes++;if(c0===10)strikes++}else if(b0!=null&&c0!=null&&b0+c0===10)spares++}else if(b0!=null&&a0+b0===10){spares++;if(c0===10)strikes++}}}
-  let curFrame=frames.length?frames[frames.length-1]:[],fIdx=frames.length-1,remain=10;
-  const lastComplete=frameComplete(frames,fIdx);
-  if(fIdx<0||lastComplete)remain=10;
-  else if(fIdx<9)remain=curFrame[0]===10?10:(10-(curFrame[0]||0));
-  else{const a=curFrame[0],b=curFrame[1];if(curFrame.length===1)remain=a===10?10:(10-a);else if(curFrame.length===2)remain=(a===10)?(b===10?10:(10-b)):10}
-  const done=frames.length===10&&frameComplete(frames,9);
-  return{frames,total,strikes,spares,remain,done}}
-function frameComplete(frames,f){if(f<0||!frames[f])return false;const fr=frames[f];if(f<9)return fr[0]===10||fr.length>=2;if(fr[0]===10||(fr[0]+(fr[1]||0)===10))return fr.length>=3;return fr.length>=2}
-function rollTxt(fr,i,fnum){if(!fr||fr[i]===undefined)return"";const v=fr[i];
-  if(fnum<9){if(i===0&&v===10)return"X";if(i===1&&(fr[0]+v===10))return"/";return v===0?"-":String(v)}
-  if(v===10)return"X";if(i>0&&fr[i-1]!==10&&(fr[i-1]+v===10))return"/";return v===0?"-":String(v)}
+/* ============ FRAME-BY-FRAME SCORER ============
+   The real ten-pin math lives in app-core.js (frameState/frameComplete/rollTxt)
+   so it can be unit-tested directly in Node. */
 
 /* ============ GUIDANCE (game plan) ============ */
 function guidance(p){const g=p.games||[],n=g.length,e=eff(p),avg=e.avg,target=p.target!=null?+p.target:150;
@@ -193,12 +178,31 @@ function avgTeamStrikesPerGame(){let tot=0,gm=0;players.forEach(p=>{const ps=pst
 /* ============ SYNC / API ============ */
 function setOnline(v){online=v}
 async function apiGet(path){const r=await fetch(path);if(!r.ok)throw r;return r.json()}
-async function apiSend(m,path,body){const h={'Content-Type':'application/json'};const s=localStorage.getItem(SK);if(s)h['x-session']=s;if(coachPin)h['x-coach-pin']=coachPin;
+/* Auth is session-only: the raw coach PIN is verified once by the server and
+   never stored or sent again — only expiring, revocable session tokens travel. */
+async function apiSend(m,path,body){const h={'Content-Type':'application/json'};const s=localStorage.getItem(SK);if(s)h['x-session']=s;const cs=localStorage.getItem(CSK);if(cs)h['x-coach-session']=cs;
   const r=await fetch(path,{method:m,headers:h,body:body?JSON.stringify(body):undefined});
-  if(r.status===401){const e=new Error('auth');e.auth=true;throw e}if(r.status===403){const e=new Error('forbidden');e.forbidden=true;throw e}if(!r.ok)throw r;return r.json()}
+  if(!r.ok){let msg='';try{msg=(await r.json()).error||''}catch(_){}
+    const e=new Error(msg||('error '+r.status));e.status=r.status;e.auth=r.status===401;e.forbidden=r.status===403;e.locked=r.status===429;e.bad=r.status===400;e.server=r.status>=500;throw e}
+  return r.json()}
 async function pull(){const d=await apiGet('/api/state');merge(d);setOnline(true);cacheSave()}
 async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body);setOnline(true);ok&&ok(r);cacheSave()}
-  catch(e){if(e&&e.auth){toast("Coach access needed","Unlock the cockpit first");openCoachPin()}else if(e&&e.forbidden){toast("Not allowed","That isn't yours to change")}else{setOnline(false);toast("No server","Open your Coolify URL / localhost:3000 to save")}}}
+  catch(e){if(e&&e.auth){toast("Coach access needed","Unlock the cockpit first");openCoachPin()}else if(e&&e.forbidden){toast("Not allowed","That isn't yours to change")}else if(e&&(e.bad||e.locked)){toast("Rejected",e.message||'Invalid request')}else if(e&&e.server){toast("Not saved",e.message||'Server could not save — try again')}else{setOnline(false);toast("No server","Open your Coolify URL / localhost:3000 to save")}}}
+
+/* ============ DURABLE OUTBOX (offline-safe score entry) ============ */
+const outbox=createOutbox({storage:localStorage,key:OBK,send:e=>apiSend('POST','/api/games',{no:e.no,score:e.score,strikes:e.strikes,spares:e.spares,date:e.date,clientId:e.clientId})});
+let _flushing=false;
+/* only sync entries the current sign-in is allowed to write, so a different
+   user on this device never spams 403s for someone else's queued scores */
+function outboxMine(e){return ui.isCoach||+e.no===+ui.me}
+async function flushOutbox(){if(_flushing||ui.me==null&&!ui.isCoach)return;if(!outbox.list().some(outboxMine))return;_flushing=true;
+  try{const r=await outbox.flush(outboxMine);
+    if(r.sent.length){setOnline(true);
+      /* a queued game that just synced must not keep offering a "delete before sync" Undo */
+      if(S._prevMe&&S._prevMe.queued&&r.sent.some(s=>s.entry.clientId===S._prevMe.clientId))S._prevMe=null;
+      try{await pull()}catch(_){}
+      toast("Synced",r.sent.length+" queued game"+(r.sent.length>1?"s":"")+" saved to the team");render()}
+  }finally{_flushing=false}}
 
 /* ============ TOAST ============ */
 function toast(title,body){S.toast={title,body};render();clearTimeout(_tt);_tt=setTimeout(()=>{S.toast=null;render()},2600)}
@@ -241,7 +245,7 @@ function render(){const root=$('#app');const anim=S._anim?'up':'';
 }
 function statusHTML(){return `<div style="height:44px;flex:0 0 auto;background:var(--navy);display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 5px;color:#fff">
   <span class="num" style="font-size:13px;font-weight:600">9:41</span>
-  <span style="font-size:11px;letter-spacing:.4px;opacity:.9">${S.offline?'◐ offline — will sync':(online?'● live sync':'○ local')}</span>
+  <span style="font-size:11px;letter-spacing:.4px;opacity:.9">${S.offline?'◐ offline — will sync':(online?'● live sync':'○ local')}${outbox.size()?' · ⏳ '+outbox.size()+' queued':''}</span>
   <span class="num" style="font-size:12px;font-weight:600;letter-spacing:1px">5G ▪ 84%</span></div>`}
 
 /* ============ LOGIN ============ */
@@ -273,12 +277,14 @@ function loginHTML(){
     <div style="text-align:center;margin-top:14px"><button onclick="openCoachPin()" style="background:none;border:none;color:var(--gold2);font-size:12px;font-weight:700;cursor:pointer">I'm the captain / coach →</button></div>
     <div style="text-align:center;opacity:.45;font-size:11px;margin-top:8px">Only your own games are yours to edit.</div>`);}
 async function doClaim(){const pin=$('#pinIn')?$('#pinIn').value.trim():'';
+  if(!/^\d{4}$/.test(pin)){toast("Set a 4-digit PIN","Your PIN lets you sign in on any phone");return;}
   try{const r=await apiSend('POST','/api/claim',{token:S.claimToken,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';localStorage.setItem(MEK,r.no);saveUI();try{history.replaceState(null,'',location.pathname)}catch(e){}S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
-  catch(e){toast("Couldn't sign in",e&&e.auth?"Invite link invalid — ask your captain":"No server — try again");}}
+  catch(e){if(e&&e.status===404){toast("Invite not valid","This link was already used — ask your captain to reset your invite")}else if(e&&e.bad){toast("PIN must be 4 digits","")}else if(e&&e.locked){toast("Too many attempts",e.message||"Try again later")}else{toast("Couldn't sign in","No server — try again")}}}
 async function doLogin(){const no=+($('#signName')?$('#signName').value:0);const pin=$('#signPin')?$('#signPin').value.trim():'';
   if(!/^\d{4}$/.test(pin)){toast("Enter your 4-digit PIN","");return;}
   try{const r=await apiSend('POST','/api/login',{no,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';localStorage.setItem(MEK,r.no);saveUI();S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
-  catch(e){toast(e&&e.auth?"Wrong PIN":"No server",e&&e.auth?"First time? Use your invite link to set a PIN.":"Try again");}}
+  catch(e){if(e&&e.locked){toast("Too many attempts",e.message||"Locked for a bit — or ask your captain to reset your invite")}
+    else{toast(e&&e.auth?"Wrong PIN":"No server",e&&e.auth?"First time? Use your invite link to set a PIN.":"Try again")}}}
 
 /* ============ HEADERS ============ */
 function playerHeaderHTML(){const m=disp(P(ui.me));return `<div style="flex:0 0 auto;background:var(--navy);color:#fff;padding:6px 20px 16px">
@@ -303,7 +309,9 @@ function meViewHTML(){const m=disp(P(ui.me)),target=m.target,pct=m.avg?Math.min(
   const ss=seasonStats(P(ui.me));
   const sr=srate(P(ui.me)),wk=gamesInDays(P(ui.me),7);
   const ag=(P(ui.me).games||[]);
-  const gamesList=ag.length?ag.map((g,i)=>({...g,num:i+1})).reverse().slice(0,25).map(g=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)"><div class="num" style="width:42px;height:34px;border-radius:9px;background:linear-gradient(160deg,var(--gold2),var(--gold));color:var(--navy);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:0 0 auto">${g.score}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">Game ${g.num}</div><div style="font-size:10.5px;color:var(--muted)">${g.date||''} · ${g.strikes||0}✕ · ${g.spares||0}/${g.by==='coach'?' · by coach':''}</div></div><button onclick="delMyGame('${g.ts}')" title="Delete" style="flex:0 0 auto;background:#fdeeec;color:var(--bad);border:none;border-radius:8px;width:32px;height:32px;font-size:14px;cursor:pointer">✕</button></div>`).join(''):'<div style="padding:8px 2px;color:var(--muted);font-size:12px">No games yet — tap ＋ Log a game.</div>';
+  const queued=outbox.list().filter(q=>+q.no===+ui.me);
+  const queuedRows=queued.map(q=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--line);background:#fdf6e3;border-radius:10px"><div class="num" style="width:42px;height:34px;border-radius:9px;background:#e7edf2;color:var(--muted2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:0 0 auto">${+q.score||0}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#8a5a00">⏳ Queued — not yet synced</div><div style="font-size:10.5px;color:var(--muted)">${esc(q.date||'')} · retries automatically when online</div></div><button onclick="delQueued('${idAttr(q.clientId)}')" title="Remove" style="flex:0 0 auto;background:#fdeeec;color:var(--bad);border:none;border-radius:8px;width:32px;height:32px;font-size:14px;cursor:pointer">✕</button></div>`).join('');
+  const gamesList=queuedRows+(ag.length?ag.map((g,i)=>({...g,num:i+1})).reverse().slice(0,25).map(g=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)"><div class="num" style="width:42px;height:34px;border-radius:9px;background:linear-gradient(160deg,var(--gold2),var(--gold));color:var(--navy);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:0 0 auto">${+g.score||0}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">Game ${g.num}</div><div style="font-size:10.5px;color:var(--muted)">${esc(g.date||'')} · ${+g.strikes||0}✕ · ${+g.spares||0}/${g.by==='coach'?' · by coach':''}</div></div><button onclick="delMyGame('${idAttr(g.id)}')" title="Delete" style="flex:0 0 auto;background:#fdeeec;color:var(--bad);border:none;border-radius:8px;width:32px;height:32px;font-size:14px;cursor:pointer">✕</button></div>`).join(''):(queued.length?'':'<div style="padding:8px 2px;color:var(--muted);font-size:12px">No games yet — tap ＋ Log a game.</div>'));
   return `<div style="padding:18px 18px 120px">
     <div class="card" style="padding:22px"><div style="display:flex;align-items:center;gap:20px">
       <div style="position:relative;width:132px;height:132px;flex:0 0 auto"><svg width="132" height="132" viewBox="0 0 132 132">
@@ -442,7 +450,7 @@ function mdEntry(team,no,game){return (matchday[team]||{})[no+'-'+game]||{}}
 function matchDayViewHTML(){const team=S.mdTeam||'A';const c=currentTeams();let list=c[team];if(!list||!list.length)list=players.filter(p=>p.team===team);const md=matchday[team]||{};
   let series=0,tStr=0,tSpr=0,entered=0,fem=0;list.forEach(p=>{[1,2].forEach(g=>{const e=md[p.no+'-'+g];if(e){series+=e.score||0;tStr+=e.strikes||0;tSpr+=e.spares||0;entered++;if(p.g==='F')fem+=e.score||0}})});
   const teamChips=['A','B','C'].map(t=>`<button onclick="mdSetTeam('${t}')" class="chip ${t===team?'on':''}">Sub-team ${t}</button>`).join('');
-  const col=(p,g)=>{const e=mdEntry(team,p.no,g);return `<div style="width:66px;flex:0 0 auto"><input inputmode="numeric" maxlength="3" value="${e.score||''}" placeholder="—" onchange="setMatchScore('${team}',${p.no},${g},this.value)" class="num" style="width:100%;text-align:center;font-size:17px;font-weight:700;color:var(--navy);border:1px solid var(--line);border-radius:10px;padding:8px 4px;background:#fff"><div onclick="editCellSS('${team}',${p.no},${g})" style="text-align:center;font-size:9px;color:${(e.strikes||e.spares)?'#8a5a00':'#c3ccd6'};margin-top:3px;cursor:pointer">${e.score?((e.strikes||0)+'✕ '+(e.spares||0)+'/'):'✕ /'}</div></div>`};
+  const col=(p,g)=>{const e=mdEntry(team,p.no,g);return `<div style="width:66px;flex:0 0 auto"><input inputmode="numeric" maxlength="3" value="${+e.score||''}" placeholder="—" onchange="setMatchScore('${team}',${p.no},${g},this.value)" class="num" style="width:100%;text-align:center;font-size:17px;font-weight:700;color:var(--navy);border:1px solid var(--line);border-radius:10px;padding:8px 4px;background:#fff"><div onclick="editCellSS('${team}',${p.no},${g})" style="text-align:center;font-size:9px;color:${(+e.strikes||+e.spares)?'#8a5a00':'#c3ccd6'};margin-top:3px;cursor:pointer">${+e.score?((+e.strikes||0)+'✕ '+(+e.spares||0)+'/'):'✕ /'}</div></div>`};
   const rows=list.map(p=>`<div style="display:flex;align-items:center;gap:9px;background:#fff;border-radius:14px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)"><div class="num" style="width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">2 qualifier games</div></div>${col(p,1)}${col(p,2)}</div>`).join('');
   return `<div style="padding:16px 16px 100px">
     <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:18px;padding:16px;color:#fff">
@@ -528,7 +536,8 @@ function ordinalSuf(n){const s=["th","st","nd","rd"],v=n%100;return s[(v-20)%10]
 function goP(t){S.ptab=t;S._anim=true;render()}
 function goC(t){S.ctab=t;S._anim=true;render()}
 function exitCoach(){if(ui.me==null){toast("Sign in as a player","Use your invite link or name + PIN to see your own games");return}ui.mode='player';S.ptab='me';saveUI();S._anim=true;render()}
-function signOut(){localStorage.removeItem(SK);localStorage.removeItem(MEK);localStorage.removeItem(PK);coachPin='';ui.me=null;ui.isCoach=false;ui.mode='player';S.screen='login';S.loginStep='signin';S.pickSel=players[0].no;render()}
+function signOut(){apiSend('POST','/api/logout',{}).catch(()=>{}); /* revoke server-side too */
+  localStorage.removeItem(SK);localStorage.removeItem(CSK);localStorage.removeItem(MEK);ui.me=null;ui.isCoach=false;ui.mode='player';S.screen='login';S.loginStep='signin';S.pickSel=players[0].no;render()}
 function toggleOffline(){S.offline=!S.offline;render()}
 function openLog(){S.logTarget=ui.me;S.sheet='log';S.scorer='quick';S.entry={score:0,strikes:0,spares:0};S.rolls=[];render()}
 function closeSheet(){S.sheet=null;render()}
@@ -565,12 +574,13 @@ function photoFramesBtnHTML(){return `<button onclick="snapFrames()" ${S.photoBu
 async function openInvites(){try{const r=await apiSend('GET','/api/invites');S.invites=r.players;S.sheet='invites';render()}catch(e){toast("Coach only","Unlock the cockpit first")}}
 function inviteMsg(first,link){return `Hi ${first}, here's your personal VOX STARS sign-in link (Design IncrediBowl S2). Tap it, set a 4-digit PIN, and you're in — you'll only ever see & log your own games:\n${link}`}
 function invitesSheetHTML(){const origin=location.origin;const bad=/^file:/.test(origin)||/localhost|127\.0\.0\.1/.test(origin);
-  const rows=(S.invites||[]).map(x=>{const p=P(x.no);const link=origin+'/?join='+x.token;
+  const rows=(S.invites||[]).map(x=>{const p=P(x.no);const link=x.token?(origin+'/?join='+idAttr(x.token)):null;
     return `<div style="display:flex;align-items:center;gap:8px;padding:10px 4px;border-bottom:1px solid var(--line)">
       <div class="num" style="width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}</div>
-      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))} ${x.claimed?'<span style="font-size:9px;color:var(--good);font-weight:700">✓ joined</span>':'<span style="font-size:9px;color:var(--muted)">not yet</span>'}</div><div style="font-size:9.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(link)}</div></div>
-      <button onclick="shareInvite(${x.no},'${x.token}')" style="flex:0 0 auto;background:#25D366;color:#fff;border:none;border-radius:9px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer">Share</button>
-      <button onclick="copyInvite('${link}')" style="flex:0 0 auto;background:var(--navy);color:#fff;border:none;border-radius:9px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer">Copy</button></div>`}).join('');
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))} ${x.claimed?'<span style="font-size:9px;color:var(--good);font-weight:700">✓ joined</span>':(x.token?'<span style="font-size:9px;color:var(--muted)">not yet</span>':'')}</div><div style="font-size:9.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${link?esc(link):'Invite used — Reset revokes their PIN & sign-ins and makes a new link'}</div></div>
+      ${link?`<button onclick="shareInvite(${+x.no},'${idAttr(x.token)}')" style="flex:0 0 auto;background:#25D366;color:#fff;border:none;border-radius:9px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer">Share</button>
+      <button onclick="copyInvite('${esc(link)}')" style="flex:0 0 auto;background:var(--navy);color:#fff;border:none;border-radius:9px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer">Copy</button>`:''}
+      <button onclick="resetInvite(${+x.no})" style="flex:0 0 auto;background:#fdeeec;color:var(--bad);border:none;border-radius:9px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer">Reset</button></div>`}).join('');
   return `<div onclick="closeSheet()" style="position:absolute;inset:0;z-index:60;background:rgba(8,18,32,.45)"></div>
   <div class="vscroll" style="position:absolute;left:0;right:0;bottom:0;z-index:61;background:var(--app);border-radius:26px 26px 0 0;max-height:90%;overflow-y:auto;animation:vsSheet .3s cubic-bezier(.32,.72,.33,1) both;padding:14px 20px 26px">
     <div style="width:40px;height:5px;border-radius:3px;background:#d3dde6;margin:0 auto 12px"></div>
@@ -581,7 +591,11 @@ function invitesSheetHTML(){const origin=location.origin;const bad=/^file:/.test
 function copyInvite(link){if(navigator.clipboard){navigator.clipboard.writeText(link).then(()=>toast("Link copied","Paste it to the player"),()=>toast("Copy failed",""))}else{toast("Copy not supported","")}}
 function shareInvite(no,token){const p=P(no),first=shortName(p.name).split(' ')[0],link=location.origin+'/?join='+token,msg=inviteMsg(first,link);
   if(navigator.share){navigator.share({title:'VOX STARS invite',text:msg}).catch(()=>{})}else{window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank')}}
-function copyAllInvites(){const lines=(S.invites||[]).map(x=>{const p=P(x.no);return shortName(p.name)+': '+location.origin+'/?join='+x.token}).join('\n');
+async function resetInvite(no){const p=P(no);if(!confirm("Reset "+shortName(p.name)+"'s invite & PIN? Their current sign-ins are revoked and the old link stops working."))return;
+  try{const r=await apiSend('POST','/api/invites/reset',{no});const it=(S.invites||[]).find(x=>x.no===no);if(it){it.token=r.token;it.claimed=false;it.hasPin=false}render();toast("Invite reset","Old link, PIN and sessions revoked — share the new link")}
+  catch(e){if(e&&e.auth){toast("Coach access needed","Unlock the cockpit first");openCoachPin()}else{toast("Reset failed",(e&&e.message)||"Try again")}}}
+function copyAllInvites(){const lines=(S.invites||[]).filter(x=>x.token).map(x=>{const p=P(x.no);return shortName(p.name)+': '+location.origin+'/?join='+idAttr(x.token)}).join('\n');
+  if(!lines){toast("No open invites","Everyone has joined — use Reset to re-invite someone");return}
   if(navigator.clipboard){navigator.clipboard.writeText(lines).then(()=>toast("All links copied","Paste into your captains' chat"),()=>toast("Copy failed",""))}else{toast("Copy not supported","")}}
 function setScorer(x){S.scorer=x;render()}
 function adj(d){S.entry.score=Math.max(0,Math.min(300,S.entry.score+d));render()}
@@ -591,22 +605,48 @@ function addRoll(n){const fs=frameState(S.rolls);if(fs.done||n>fs.remain)return;
 function undoRoll(){S.rolls=S.rolls.slice(0,-1);const nf=frameState(S.rolls);S.entry={...S.entry,score:nf.total,strikes:nf.strikes,spares:nf.spares};render()}
 function clearRolls(){S.rolls=[];S.entry={...S.entry,score:0,strikes:0,spares:0};render()}
 async function saveLog(){const e=S.entry;if(!(e.score>0)){toast("Enter a score","Tap ＋ or type a final score");return}
-  const no=S.logTarget||ui.me,p=P(no),body={no,score:e.score,strikes:e.strikes,spares:e.spares,date:new Date().toISOString().slice(0,10)};
+  const no=S.logTarget||ui.me,p=P(no),body={no,score:e.score,strikes:e.strikes,spares:e.spares,date:new Date().toISOString().slice(0,10),clientId:outbox.newClientId()};
   const wasBest=disp(p).best;
-  try{const{game}=await apiSend('POST','/api/games',body,false);S._prevMe={no,game};p.games.push(game);cacheSave();setOnline(true);
+  try{const{game}=await apiSend('POST','/api/games',body);S._prevMe={no,game};p.games.push(game);cacheSave();setOnline(true);
     S.sheet=null;const nb=e.score>=wasBest;toast(nb?'New personal best! 🎳':'Game logged',e.score+' pins · avg now '+disp(p).avg);render()}
-  catch(err){if(err&&err.auth){S.sheet=null;toast("Session expired","Sign in again to log");render()}else if(err&&err.forbidden){S.sheet=null;toast("Not your game","You can only log your own");render()}else{setOnline(false);S.sheet=null;toast("Saved offline","Reconnect to sync — open your Coolify URL");render()}}}
-function undoLog(){if(S._prevMe){const p=P(S._prevMe.no);if(p&&p.games.length)p.games.pop();S._prevMe=null;cacheSave();clearTimeout(_tt);S.toast=null;render()}}
-async function delMyGame(ts){if(!confirm("Delete this game? This can't be undone."))return;const no=ui.me,p=P(no);
-  try{await apiSend('DELETE','/api/games/'+no+'/'+ts);p.games=p.games.filter(x=>String(x.ts)!==String(ts));cacheSave();setOnline(true);toast("Game removed","Your average updated");render()}
-  catch(e){if(e&&e.forbidden){toast("Not allowed","Only your own games")}else if(e&&e.auth){toast("Sign in again","")}else{setOnline(false);toast("No server","Reconnect to remove")}}}
+  catch(err){
+    /* never claim "saved" unless it reached the server or is durably queued;
+       on auth/validation errors the form stays open so the score isn't lost */
+    if(err&&err.auth){toast("Session expired","Sign in again — your score is still on this form");return}
+    if(err&&err.forbidden){toast("Not your game","You can only log your own — score kept on the form");return}
+    if(err&&(err.bad||err.locked||err.server)){toast("Not saved",err.message||"Rejected — score kept on the form, try again");return}
+    const q=outbox.add(body);setOnline(false);
+    if(q.ok){S._prevMe={no,clientId:q.entry.clientId,queued:true};S.sheet=null;toast("⏳ Queued — not yet synced","Saves automatically when you're back online");render()}
+    else{toast("NOT saved","Couldn't reach the server or queue on this device — keep this form open and retry")}}}
+async function undoLog(){const u=S._prevMe;if(!u)return;
+  if(u.queued){
+    if(outbox.remove(u.clientId)){S._prevMe=null;clearTimeout(_tt);S.toast=null;render();toast("Removed","Queued game deleted before syncing");return}
+    /* it already synced while the toast was up — Undo must delete it on the server, not lie */
+    const p=P(u.no),g=p&&(p.games||[]).find(x=>x.clientId===u.clientId);
+    if(g){try{await apiSend('DELETE','/api/games/'+u.no+'/'+g.id);if(p)p.games=p.games.filter(x=>x.id!==g.id);S._prevMe=null;cacheSave();clearTimeout(_tt);S.toast=null;render();toast("Undone","Game removed from the server");return}catch(e){}}
+    S._prevMe=null;render();toast("Already synced","It saved before you tapped Undo — delete it from My games");return}
+  /* the game reached the server: Undo is only real once the server confirms the delete */
+  try{await apiSend('DELETE','/api/games/'+u.no+'/'+u.game.id);const p=P(u.no);if(p)p.games=p.games.filter(x=>x.id!==u.game.id);S._prevMe=null;cacheSave();clearTimeout(_tt);S.toast=null;render();toast("Undone","Game removed from the server")}
+  catch(e){toast("Undo failed",(e&&e.message)||"It's still saved — delete it from My games when online")}}
+function delQueued(clientId){if(!confirm("Remove this queued game? It hasn't reached the server yet."))return;outbox.remove(clientId);toast("Removed","Queued game deleted");render()}
+async function delMyGame(id){
+  if(!id||id==='undefined'){toast("Refresh needed","Syncing this game first — try delete again");try{await pull()}catch(_){}render();return}
+  if(!confirm("Delete this game? This can't be undone."))return;const no=ui.me,p=P(no);
+  try{const r=await apiSend('DELETE','/api/games/'+no+'/'+id);
+    if(r&&r.removed>0){p.games=p.games.filter(x=>String(x.id)!==String(id));cacheSave();setOnline(true);toast("Game removed","Your average updated")}
+    else{try{await pull()}catch(_){}toast("Already gone","Refreshed from the server")}
+    render()}
+  catch(e){if(e&&e.forbidden){toast("Not allowed","Only your own games")}else if(e&&e.auth){toast("Sign in again","")}else if(e&&e.server){toast("Not removed",e.message||"Server couldn't save — try again")}else{setOnline(false);toast("No server","Reconnect to remove")}}}
 async function saveMyTarget(){const v=+($('#tgtIn')?$('#tgtIn').value:0)||null;const p=P(ui.me);
-  try{await apiSend('POST','/api/mytarget',{no:ui.me,target:v},false);p.target=v;cacheSave();toast("Target set","Chasing "+(v||150)+" now")}
-  catch(e){setOnline(false);toast("No server","Reconnect to save your target")}}
+  try{await apiSend('POST','/api/mytarget',{no:ui.me,target:v});p.target=v;cacheSave();toast("Target set","Chasing "+(v||150)+" now")}
+  catch(e){if(e&&e.auth){toast("Session expired","Sign in again to save")}else if(e&&e.status){toast("Not saved",e.message||"Try again")}else{setOnline(false);toast("No server","Reconnect to save your target")}}}
 /* coach */
 function enterCoachDirect(){ui.mode='coach';S.screen='app';S.ctab='squad';saveUI();S._anim=true;render();}
-function openCoachPin(){const pin=prompt("Coach / Captain PIN");if(pin==null)return;const pn=pin.trim();const prev=coachPin;coachPin=pn;
-  apiSend('POST','/api/coach/verify',{pin:pn}).then(r=>{if(r.ok){localStorage.setItem(PK,pn);ui.mode='coach';ui.isCoach=true;S.screen='app';S.ctab='squad';saveUI();S._anim=true;render();toast("Coach mode","Full access unlocked")}else{coachPin=prev;toast("Wrong PIN","Ask for the captain PIN")}}).catch(()=>{coachPin=prev;setOnline(false);toast("No server","Can't verify PIN offline")})}
+function openCoachPin(){const pin=prompt("Coach / Captain PIN");if(pin==null)return;
+  /* the raw PIN is sent once for verification and never stored — we keep only
+     the expiring coach session the server issues */
+  apiSend('POST','/api/coach/verify',{pin:pin.trim()}).then(r=>{if(r.ok&&r.session){localStorage.setItem(CSK,r.session);ui.mode='coach';ui.isCoach=true;S.screen='app';S.ctab='squad';saveUI();S._anim=true;render();toast("Coach mode","Full access unlocked (session expires in ~12h)")}})
+  .catch(e=>{if(e&&e.auth){toast("Wrong PIN","Ask for the captain PIN")}else if(e&&e.locked){toast("Too many attempts",e.message||"Wait a bit, then try again")}else{setOnline(false);toast("No server","Can't verify PIN offline")}})}
 function toggleAvail(no){const p=P(no);const nv=!(p.available!==false);coachAction('PUT','/api/players/'+no,{available:nv},()=>{p.available=nv;render()})}
 function nudge(no){const p=P(no),first=shortName(p.name).split(' ')[0];const msg="Hi "+first+"! Log your bowling practice scores in the VOX STARS app so we can build the best line-up — every game you log helps the team: "+location.origin;try{window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank")}catch(e){}toast("Opening WhatsApp","Pick "+first+" to send the nudge")}
 function logForThem(no){S.logTarget=no;S.sheet='log';S.scorer='quick';S.entry={score:0,strikes:0,spares:0};S.rolls=[];render()}
@@ -620,24 +660,38 @@ function sessAdj(no,d){const sc={...S.session.scores};sc[no]=Math.max(0,Math.min
 function setSessScoreInput(no,v){let n=parseInt(String(v).replace(/[^\d]/g,''),10);if(isNaN(n))n=0;S.session.scores={...S.session.scores,[no]:Math.max(0,Math.min(300,n))}}
 function sessNext(){const c=currentTeams();let list=c[S.session.team];if(c.A.length+c.B.length+c.C.length===0)list=players;S.session.idx=Math.min(list.length,S.session.idx+1);render()}
 function sessPrev(){S.session.idx=Math.max(0,S.session.idx-1);render()}
-async function sessSaveAll(){const sc=S.session.scores,date=new Date().toISOString().slice(0,10);let ok=0;
-  for(const no of Object.keys(sc)){if(sc[no]>0){try{const{game}=await apiSend('POST','/api/games',{no:+no,score:sc[no],date},false);P(+no).games.push(game);ok++}catch(e){}}}
-  cacheSave();S.session={...S.session,idx:0,scores:{}};toast("Lane saved",ok+" scores logged for the squad");render()}
+async function sessSaveAll(){const sc=S.session.scores,date=new Date().toISOString().slice(0,10);let ok=0;const failed={};let lastErr=null;
+  /* one stable clientId per player for this lane, reused across retries so a lost
+     response can never create a duplicate game when the coach taps Save again */
+  const cids=S.session.cids||(S.session.cids={});
+  for(const no of Object.keys(sc)){if(!(sc[no]>0))continue;
+    const cid=cids[no]||(cids[no]=outbox.newClientId());
+    try{const{game}=await apiSend('POST','/api/games',{no:+no,score:sc[no],date,clientId:cid});P(+no).games.push(game);ok++;delete cids[no]}
+    catch(e){failed[no]=sc[no];lastErr=e}}
+  cacheSave();const nFail=Object.keys(failed).length;
+  S.session={...S.session,idx:0,scores:failed,cids};
+  if(nFail){if(lastErr&&!lastErr.status)setOnline(false);
+    toast("Partly saved",ok+" saved · "+nFail+" NOT saved — kept on the form, tap Save again")}
+  else toast("Lane saved",ok+" scores logged for the squad");
+  render()}
 
 /* ============ SYNC LOOP ============ */
-async function refresh(){try{await pull();setOnline(true);render()}catch(e){setOnline(false)}}
+async function refresh(){try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);render()}catch(e){setOnline(false)}}
 
 /* ============ WIRE (post-render focus etc.) ============ */
 function wire(){}
 
 /* ============ BOOT ============ */
-function startPoll(){setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){setOnline(false)}},20000);}
+function startPoll(){setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){setOnline(false)}},20000);
+  window.addEventListener('online',()=>{flushOutbox().catch(()=>{})});}
 async function boot(){loadUI();seed();try{await pull()}catch(e){setOnline(false);cacheLoad()}
   S.strategy=settings.splitStrategy||'powerhouse';S.applied=settings.splitStrategy||'powerhouse';S.pickSel=players[0].no;
   const jt=new URLSearchParams(location.search).get('join');
   if(jt){try{const r=await apiGet('/api/join?t='+encodeURIComponent(jt));if(r&&r.ok){S.screen='login';S.loginStep='claim';S.claimToken=jt;S.claimNo=r.player.no;render();startPoll();return;}}catch(e){}}
   const sess=localStorage.getItem(SK);
-  if(sess){try{const r=await apiSend('POST','/api/session',{session:sess});if(r&&r.ok){ui.me=r.no;ui.isCoach=r.isCoach;ui.mode=r.no==null?'coach':'player';S.screen='app';S.ptab='me';S.ctab='squad';render();startPoll();return;}}catch(e){localStorage.removeItem(SK)}}
+  if(sess){try{const r=await apiSend('POST','/api/session',{session:sess});if(r&&r.ok&&r.no!=null){ui.me=r.no;ui.isCoach=!!r.isCoach;ui.mode='player';S.screen='app';S.ptab='me';S.ctab='squad';render();startPoll();flushOutbox().catch(()=>{});return;}}catch(e){if(e&&e.auth)localStorage.removeItem(SK)}}
+  const csess=localStorage.getItem(CSK);
+  if(csess){try{const r=await apiSend('POST','/api/session',{session:csess});if(r&&r.ok){ui.isCoach=true;ui.mode='coach';S.screen='app';S.ctab='squad';render();startPoll();return;}}catch(e){if(e&&e.auth)localStorage.removeItem(CSK)}}
   S.screen='login';S.loginStep='signin';render();startPoll();}
 boot();
 </script>
