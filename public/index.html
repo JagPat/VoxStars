@@ -678,13 +678,26 @@ async function sessSaveAll(){const sc=S.session.scores,date=new Date().toISOStri
   render()}
 
 /* ============ SYNC LOOP ============ */
-async function refresh(){try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);render()}catch(e){setOnline(false)}}
+/* A background sync got a real 401 while we were signed in: the stored session
+   expired or was revoked. Clean up and route to re-auth once, instead of
+   silently showing stale data. Only acts inside the app (not the login screen,
+   where an unauthenticated /api/state 401 is expected). Queued scores in the
+   outbox are preserved for when the same user signs back in. */
+function handleSessionExpired(){
+  if(S.screen!=='app')return;
+  localStorage.removeItem(SK);localStorage.removeItem(CSK);
+  ui.me=null;ui.isCoach=false;ui.mode='player';
+  S.screen='login';S.loginStep='signin';S.pickSel=(players[0]||{}).no;
+  setOnline(false);render();
+  toast("Session expired","Sign in again to continue");
+}
+async function refresh(){try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);render()}catch(e){if(e&&e.auth)handleSessionExpired();else setOnline(false)}}
 
 /* ============ WIRE (post-render focus etc.) ============ */
 function wire(){}
 
 /* ============ BOOT ============ */
-function startPoll(){setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){setOnline(false)}},20000);
+function startPoll(){setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){if(e&&e.auth)handleSessionExpired();else setOnline(false)}},20000);
   window.addEventListener('online',()=>{flushOutbox().catch(()=>{})});}
 async function boot(){loadUI();seed();try{await pull()}catch(e){setOnline(false);cacheLoad()}
   S.strategy=settings.splitStrategy||'powerhouse';S.applied=settings.splitStrategy||'powerhouse';S.pickSel=players[0].no;
