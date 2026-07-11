@@ -155,12 +155,12 @@ function enterDegraded(reason) {
 }
 
 function blankPlayer(no) {
-  return { no, games: [], available: true, lockIn: false, lockOut: false, estAvg: null,
+  return { no, games: [], available: true, estAvg: null,
     team: null, pin: false, target: null, authPin: null, inviteToken: newToken(), claimed: false };
 }
 function defaultState() {
   return { players: ROSTER_NOS.map(blankPlayer),
-    settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 },
+    settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A' },
     sessions: {}, matchday: { A: {}, B: {}, C: {} }, installId: newToken(), updatedAt: Date.now() };
 }
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -213,7 +213,7 @@ function normalize(s) {
     if (p.claimed) { if (p.inviteToken) changed = true; inviteToken = null; }
     else if (typeof p.inviteToken === 'string' && p.inviteToken) inviteToken = p.inviteToken;
     else { changed = true; inviteToken = newToken(); }
-    return { no, games, available: p.available !== false, lockIn: !!p.lockIn, lockOut: !!p.lockOut,
+    return { no, games, available: p.available !== false,
       estAvg: (p.estAvg ?? null), team: (['A', 'B', 'C'].includes(p.team) ? p.team : null), pin: !!p.pin,
       target: (p.target ?? null), authPin: (typeof p.authPin === 'string' ? p.authPin : null),
       inviteToken, claimed: !!p.claimed };
@@ -232,7 +232,7 @@ function normalize(s) {
     changed,
     state: {
       players,
-      settings: Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A', teamSize: 5, teamsCount: 3 }, (s.settings && typeof s.settings === 'object') ? s.settings : {}),
+      settings: Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A' }, (s.settings && typeof s.settings === 'object') ? s.settings : {}),
       sessions, matchday,
       installId: (typeof s.installId === 'string' && s.installId) ? s.installId : newToken(),
       updatedAt: Number(s.updatedAt) || Date.now(),
@@ -263,7 +263,7 @@ function loadState() {
   if (normalized.changed) {
     // migrate on disk; deterministic ids mean a failed write still yields the
     // same ids next boot, so we never serve unstable identifiers.
-    writeFileAtomic(JSON.stringify(normalized.state))
+    enqueueWrite(JSON.stringify(normalized.state))
       .catch(err => console.error('migration persist failed (will retry on next write):', err.message));
   }
   return normalized.state;
@@ -276,6 +276,14 @@ async function writeFileAtomic(snapshot) {
   await fs.promises.rename(TMP_FILE, DATA_FILE);
   try { const dh = await fs.promises.open(DATA_DIR, 'r'); try { await dh.sync(); } finally { await dh.close(); } }
   catch (_) { /* some filesystems reject directory fsync; the rename is still atomic */ }
+}
+// All disk writes (the startup migration write and every commit) go through
+// this one queue so they never overlap on the shared temp file.
+let writeChain = Promise.resolve();
+function enqueueWrite(snapshot) {
+  const run = writeChain.then(() => writeFileAtomic(snapshot));
+  writeChain = run.then(() => {}, () => {});
+  return run;
 }
 
 let state = loadState();
@@ -305,7 +313,7 @@ function commit(apply) {
     const result = apply();
     state.updatedAt = Date.now();
     const snapshot = JSON.stringify(state);
-    try { await writeFileAtomic(snapshot); }
+    try { await enqueueWrite(snapshot); }
     catch (e) { revertToDisk(); const err = new Error('persist failed: ' + e.message); err.persistFailed = true; throw err; }
     return result;
   });
@@ -536,7 +544,7 @@ app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
     state.players = ROSTER_NOS.map(no => {
       const bk = byNo.get(no); const cur = P(no);
       if (!bk) return cur || blankPlayer(no);
-      return { no, games: (bk.games || []).map((g, i) => cleanGame(g, no, i)), available: bk.available !== false, lockIn: !!bk.lockIn, lockOut: !!bk.lockOut,
+      return { no, games: (bk.games || []).map((g, i) => cleanGame(g, no, i)), available: bk.available !== false,
         estAvg: bk.estAvg ?? null, team: bk.team ?? null, pin: !!bk.pin, target: bk.target ?? null,
         authPin: bk.authPin ?? (cur && cur.authPin) ?? null,
         // single-use invites: never resurrect a token for an already-claimed player
@@ -605,8 +613,6 @@ app.put('/api/players/:no', async (req, res) => { if (!gateCoach(req, res)) retu
   await saveAndReply(res, () => {
     const p = P(req.params.no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
     if (b.available !== undefined) p.available = !!b.available;
-    if (b.lockIn   !== undefined) p.lockIn   = !!b.lockIn;
-    if (b.lockOut  !== undefined) p.lockOut  = !!b.lockOut;
     if (b.estAvg   !== undefined) p.estAvg   = (b.estAvg === null || b.estAvg === '') ? null : Number(b.estAvg);
     if (b.team     !== undefined) p.team     = (['A', 'B', 'C'].includes(b.team)) ? b.team : null;
     if (b.pin      !== undefined) p.pin      = !!b.pin;
@@ -632,7 +638,7 @@ app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
     Object.keys(a).forEach(no => { const p = P(no); if (p) p.team = ['A', 'B', 'C'].includes(a[no]) ? a[no] : null; });
   }, { ok: true }); });
 function applySettings(b) {
-  ['defaultAvg', 'capCr', 'teamSize', 'teamsCount'].forEach(k => {
+  ['defaultAvg', 'capCr'].forEach(k => {
     if (b[k] !== undefined && b[k] !== null && b[k] !== '' && Number.isFinite(Number(b[k]))) state.settings[k] = Number(b[k]);
   });
   if (['powerhouse', 'balanced', 'tiered'].includes(b.splitStrategy)) state.settings.splitStrategy = b.splitStrategy;

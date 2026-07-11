@@ -65,16 +65,16 @@ const ROSTER=[
 ];
 const LEADS={A:149,B:171,C:175};
 const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Verantes Elites":[145,144,139,126,115,100,94,64,59],"Bharat Blazers":[172,132,120,120,116,93,84],"Durlax Warriors":[150,134,127,120,118,105,102,95],"TWF Tornados":[139,129,124,124,123,120,115,102,92,75],"Koil Krushers":[138,131,124,120,118,115,115,104,75],"Eff.co Wreckers":[130,128,127,122,120,106,90],"Fima Strikers":[140,138,133,126,90,86],"CXO Superboss":[132,131,126,125,111,85,73],"All About Living":[142,127,122,113,112,110],"Dynamic Hunters":[126,126,117,115,113,110,90]};
-const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A",teamSize:5,teamsCount:3};
-const CK="vox_v3_cache",UK="vox_v3_ui",MEK="vox_v3_me",SK="vox_v3_session",CSK="vox_v3_coach_session",OBK="vox_v3_outbox";
+const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A"};
+const CK="vox_v3_cache",UK="vox_v3_ui",SK="vox_v3_session",CSK="vox_v3_coach_session",OBK="vox_v3_outbox";
 try{localStorage.removeItem("vox_v3_pin")}catch(e){} /* never keep the raw coach PIN on the device */
 
-let players=[], settings={...DEFSET}, matchday={A:{},B:{},C:{}}, online=false, lastSync=0;
+let players=[], settings={...DEFSET}, matchday={A:{},B:{},C:{}}, online=false;
 let ui={me:null,mode:"player",isCoach:false};
 let S={ screen:"login", loginStep:"pick", pickSel:null,
   ptab:"me", ctab:"squad", sheet:null, scorer:"quick",
   entry:{score:0,strikes:0,spares:0}, rolls:[], logTarget:null,
-  toast:null, offline:false, session:{lane:3,team:"A",idx:0,scores:{}},
+  toast:null, session:{lane:3,team:"A",idx:0,scores:{}},
   strategy:"powerhouse", applied:"powerhouse", _anim:true, _prevMe:null };
 let _tt=null;
 
@@ -82,10 +82,10 @@ let _tt=null;
 function seed(){ players=ROSTER.map(r=>({...r,games:[],available:true,estAvg:null,team:null,pin:false,target:null})); }
 function merge(d){ const by=new Map((d.players||[]).map(p=>[p.no,p]));
   players=ROSTER.map(r=>{const s=by.get(r.no)||{};return {...r,games:s.games||[],available:s.available!==false,estAvg:(s.estAvg??null),team:(s.team??null),pin:!!s.pin,target:(s.target??null)};});
-  if(d.settings) settings={...DEFSET,...d.settings}; if(d.matchday) matchday={A:{...(d.matchday.A||{})},B:{...(d.matchday.B||{})},C:{...(d.matchday.C||{})}}; lastSync=d.updatedAt||Date.now();
+  if(d.settings) settings={...DEFSET,...d.settings}; if(d.matchday) matchday={A:{...(d.matchday.A||{})},B:{...(d.matchday.B||{})},C:{...(d.matchday.C||{})}};
   if(d.installId){const seen=localStorage.getItem('vox_install');if(seen&&seen!==d.installId){S.dataReset=true;try{render()}catch(e){}}try{localStorage.setItem('vox_install',d.installId)}catch(e){}} }
-function cacheSave(){try{localStorage.setItem(CK,JSON.stringify({players,settings,matchday,lastSync}))}catch(e){}}
-function cacheLoad(){try{const d=JSON.parse(localStorage.getItem(CK));if(d&&d.players){players=d.players;settings={...DEFSET,...d.settings};matchday=d.matchday||{A:{},B:{},C:{}};lastSync=d.lastSync||0;return true}}catch(e){}return false}
+function cacheSave(){try{localStorage.setItem(CK,JSON.stringify({players,settings,matchday}))}catch(e){}}
+function cacheLoad(){try{const d=JSON.parse(localStorage.getItem(CK));if(d&&d.players){players=d.players;settings={...DEFSET,...d.settings};matchday=d.matchday||{A:{},B:{},C:{}};return true}}catch(e){}return false}
 function saveUI(){try{localStorage.setItem(UK,JSON.stringify(ui))}catch(e){}}
 function loadUI(){try{const d=JSON.parse(localStorage.getItem(UK));if(d)ui={...ui,...d}}catch(e){}}
 const P=no=>players.find(p=>p.no===+no);
@@ -229,7 +229,7 @@ function restoreBackup(e){const f=e.target.files&&e.target.files[0];if(!f)return
 
 /* ============ RENDER SHELL ============ */
 function render(){const root=$('#app');const anim=S._anim?'up':'';
-  if(S.screen==='login'){root.innerHTML=loginHTML();S._anim=false;wire();return}
+  if(S.screen==='login'){root.innerHTML=loginHTML();S._anim=false;return}
   const isCoach=ui.mode==='coach';
   root.innerHTML=`
     ${statusHTML()}
@@ -243,11 +243,11 @@ function render(){const root=$('#app');const anim=S._anim?'up':'';
     ${S.sheet==='log'?logSheetHTML():''}
     ${S.sheet==='invites'?invitesSheetHTML():''}
     ${S.toast?toastHTML():''}`;
-  S._anim=false;wire();
+  S._anim=false;
 }
 function statusHTML(){return `<div style="height:44px;flex:0 0 auto;background:var(--navy);display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 5px;color:#fff">
   <span class="num" style="font-size:13px;font-weight:600">9:41</span>
-  <span style="font-size:11px;letter-spacing:.4px;opacity:.9">${S.offline?'◐ offline — will sync':(online?'● live sync':'○ local')}${outbox.size()?' · ⏳ '+outbox.size()+' queued':''}</span>
+  <span style="font-size:11px;letter-spacing:.4px;opacity:.9">${online?'● live sync':'○ local'}${outbox.size()?' · ⏳ '+outbox.size()+' queued':''}</span>
   <span class="num" style="font-size:12px;font-weight:600;letter-spacing:1px">5G ▪ 84%</span></div>`}
 
 /* ============ LOGIN ============ */
@@ -280,11 +280,11 @@ function loginHTML(){
     <div style="text-align:center;opacity:.45;font-size:11px;margin-top:8px">Only your own games are yours to edit.</div>`);}
 async function doClaim(){const pin=$('#pinIn')?$('#pinIn').value.trim():'';
   if(!/^\d{4}$/.test(pin)){toast("Set a 4-digit PIN","Your PIN lets you sign in on any phone");return;}
-  try{const r=await apiSend('POST','/api/claim',{token:S.claimToken,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';localStorage.setItem(MEK,r.no);saveUI();try{history.replaceState(null,'',location.pathname)}catch(e){}S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
+  try{const r=await apiSend('POST','/api/claim',{token:S.claimToken,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';saveUI();try{history.replaceState(null,'',location.pathname)}catch(e){}S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
   catch(e){if(e&&e.status===404){toast("Invite not valid","This link was already used — ask your captain to reset your invite")}else if(e&&e.bad){toast("PIN must be 4 digits","")}else if(e&&e.locked){toast("Too many attempts",e.message||"Try again later")}else{toast("Couldn't sign in","No server — try again")}}}
 async function doLogin(){const no=+($('#signName')?$('#signName').value:0);const pin=$('#signPin')?$('#signPin').value.trim():'';
   if(!/^\d{4}$/.test(pin)){toast("Enter your 4-digit PIN","");return;}
-  try{const r=await apiSend('POST','/api/login',{no,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';localStorage.setItem(MEK,r.no);saveUI();S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
+  try{const r=await apiSend('POST','/api/login',{no,pin});localStorage.setItem(SK,r.session);ui.me=r.no;ui.isCoach=r.isCoach;ui.mode='player';saveUI();S.screen='app';S.ptab='me';S._anim=true;render();refresh();}
   catch(e){if(e&&e.locked){toast("Too many attempts",e.message||"Locked for a bit — or ask your captain to reset your invite")}
     else{toast(e&&e.auth?"Wrong PIN":"No server",e&&e.auth?"First time? Use your invite link to set a PIN.":"Try again")}}}
 
@@ -389,7 +389,6 @@ function profileViewHTML(){const m=disp(P(ui.me));return `<div style="padding:18
     <div class="card" style="padding:16px 18px;margin-top:12px"><div class="lbl">Photo score reading (optional)</div>
       <div style="font-size:11.5px;color:var(--muted2);margin-top:6px;line-height:1.45">Snap the lane monitor to auto-fill your score — free, on your device. For sharper reading, add your own Google Gemini key: it stays on this device and uses your own quota, so the team is never charged.</div>
       <button onclick="setAiKey()" style="width:100%;margin-top:10px;border-radius:12px;padding:11px;font-size:12.5px;font-weight:700;cursor:pointer;border:1px solid ${aiKeySet()?'#cfe6d8':'var(--line)'};background:${aiKeySet()?'#eef7f1':'#fff'};color:${aiKeySet()?'var(--good)':'var(--navy)'}">${aiKeySet()?'✓ Your AI key is set — tap to change or remove':'＋ Add my AI key (optional)'}</button></div>
-    <button onclick="toggleOffline()" style="width:100%;margin-top:12px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid ${S.offline?'#caa24a':'var(--line)'};background:${S.offline?'#fdf6e3':'#fff'};color:${S.offline?'#8a5a00':'var(--muted2)'}">${S.offline?'◐ Offline mode is ON — tap to go live':'● Online — tap to simulate offline'}</button>
     ${ui.isCoach?`<button onclick="enterCoachDirect()" style="width:100%;margin-top:10px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff">Enter coach cockpit →</button>`:`<button onclick="openCoachPin()" style="width:100%;margin-top:10px;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff">Coach / Captain access →</button>`}
     <button onclick="signOut()" style="width:100%;margin-top:10px;border-radius:14px;padding:13px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--muted2)">Sign out</button></div>`}
 
@@ -539,8 +538,7 @@ function goP(t){S.ptab=t;S._anim=true;render()}
 function goC(t){S.ctab=t;S._anim=true;render()}
 function exitCoach(){if(ui.me==null){toast("Sign in as a player","Use your invite link or name + PIN to see your own games");return}ui.mode='player';S.ptab='me';saveUI();S._anim=true;render()}
 function signOut(){apiSend('POST','/api/logout',{}).catch(()=>{}); /* revoke server-side too */
-  localStorage.removeItem(SK);localStorage.removeItem(CSK);localStorage.removeItem(MEK);ui.me=null;ui.isCoach=false;ui.mode='player';S.screen='login';S.loginStep='signin';S.pickSel=players[0].no;render()}
-function toggleOffline(){S.offline=!S.offline;render()}
+  localStorage.removeItem(SK);localStorage.removeItem(CSK);ui.me=null;ui.isCoach=false;ui.mode='player';S.screen='login';S.loginStep='signin';S.pickSel=players[0].no;render()}
 function openLog(){S.logTarget=ui.me;S.sheet='log';S.scorer='quick';S.entry={score:0,strikes:0,spares:0};S.rolls=[];render()}
 function closeSheet(){S.sheet=null;render()}
 
@@ -693,8 +691,6 @@ function handleSessionExpired(){
 }
 async function refresh(){try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);render()}catch(e){if(e&&e.auth)handleSessionExpired();else setOnline(false)}}
 
-/* ============ WIRE (post-render focus etc.) ============ */
-function wire(){}
 
 /* ============ BOOT ============ */
 function startPoll(){setInterval(async()=>{if(S.sheet||document.querySelector('input:focus'))return;try{await flushOutbox()}catch(e){}try{await pull();setOnline(true);if(S.screen==='app')render()}catch(e){if(e&&e.auth)handleSessionExpired();else setOnline(false)}},20000);

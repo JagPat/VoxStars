@@ -150,15 +150,21 @@ test('two games created at the same mocked time keep independent identities', as
 });
 
 test('sessions expire and are rejected afterwards', async () => {
-  const srv = await startServer({ env: { VOX_TEST_SESSION_TTL_MS: '120' } });
+  // TTL must comfortably exceed setup latency (even on a loaded CI runner) so
+  // the setup sessions stay valid while we arrange the test; the sleep then
+  // pushes real time past the TTL so expiry is observed deterministically.
+  const TTL = 2000;
+  const srv = await startServer({ env: { VOX_TEST_SESSION_TTL_MS: String(TTL) } });
   try {
     const req = api(srv.base);
     const cs = (await req('POST', '/api/coach/verify', { body: { pin: srv.coachPin } })).body.session;
-    const tok = (await req('GET', '/api/invites', { coachSession: cs })).body.players.find(p => p.no === 99).token;
+    const inv = await req('GET', '/api/invites', { coachSession: cs });
+    assert.equal(inv.status, 200, 'setup coach session still valid (raise TTL if this flakes on CI)');
+    const tok = inv.body.players.find(p => p.no === 99).token;
     const s99 = (await req('POST', '/api/claim', { body: { token: tok, pin: '1234' } })).body.session;
     let r = await req('POST', '/api/session', { body: { session: s99 } });
     assert.equal(r.status, 200, 'fresh session valid');
-    await sleep(250);
+    await sleep(TTL + 400);
     r = await req('POST', '/api/session', { body: { session: s99 } });
     assert.equal(r.status, 401, 'expired session rejected on validation');
     r = await req('POST', '/api/games', { body: { no: 99, score: 100 }, session: s99 });
