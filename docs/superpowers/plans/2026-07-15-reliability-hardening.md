@@ -28,7 +28,7 @@
 - Produces: `createScoreEntry()`, `updateScoreEntry(entry, patch)`, `beginScoreSubmission(entry, makeId)`, `endScoreSubmission(entry)`, `localDate(date)`, `offlineSessionIdentity(session, binding, knownNos)`, and `fetchWithTimeout(fetchImpl, url, options, timeoutMs)`.
 - Consumes: existing CommonJS/browser UMD export and the browser `AbortController` implementation.
 
-- [ ] **Step 1: Write failing client-helper tests**
+- [x] **Step 1: Write failing client-helper tests**
 
 Add tests demonstrating that an entered zero is valid, a second concurrent begin is rejected, an unchanged retry reuses its client ID, edits clear the ID, local calendar fields produce `YYYY-MM-DD`, mismatched offline bindings are rejected, and a stalled fetch aborts.
 
@@ -48,13 +48,13 @@ test('an explicitly entered zero is submittable', () => {
 });
 ```
 
-- [ ] **Step 2: Run the helper tests and verify RED**
+- [x] **Step 2: Run the helper tests and verify RED**
 
 Run: `node --test test/scoring.test.js`
 
 Expected: FAIL because the new helper exports do not exist.
 
-- [ ] **Step 3: Implement the minimal helpers**
+- [x] **Step 3: Implement the minimal helpers**
 
 Add pure state helpers that preserve a stable client ID until the entry changes, plus local-date, offline-binding, and fetch-timeout helpers. Export them from the existing UMD factory.
 
@@ -69,13 +69,13 @@ function beginScoreSubmission(entry, makeId) {
 }
 ```
 
-- [ ] **Step 4: Run the helper tests and verify GREEN**
+- [x] **Step 4: Run the helper tests and verify GREEN**
 
 Run: `node --test test/scoring.test.js`
 
 Expected: all scorer and helper tests pass.
 
-- [ ] **Step 5: Commit the client primitives**
+- [x] **Step 5: Commit the client primitives**
 
 ```bash
 git add public/app-core.js test/scoring.test.js
@@ -92,7 +92,7 @@ git commit -m "test: define reliable score submission state"
 - Consumes: existing `/api/mytarget`, `/api/players/:no`, `/api/restore`, `/api/teams`, and `/api/matchday` endpoints.
 - Produces: HTTP 400 validation for out-of-range numeric fields, duplicate restore players, and cross-team match entries.
 
-- [ ] **Step 1: Write isolated failing API tests**
+- [x] **Step 1: Write isolated failing API tests**
 
 Use a fresh temporary server per test and assert that invalid requests leave state unchanged.
 
@@ -119,13 +119,13 @@ test('restore rejects duplicate roster numbers', async () => {
 });
 ```
 
-- [ ] **Step 2: Run validation tests and verify RED**
+- [x] **Step 2: Run validation tests and verify RED**
 
 Run: `node --test test/validation.test.js`
 
 Expected: FAIL because the current endpoints accept these malformed requests.
 
-- [ ] **Step 3: Add boundary validation before mutation**
+- [x] **Step 3: Add boundary validation before mutation**
 
 Validate `target` as null or integer 0–300 and `estAvg` as null or finite number 0–300. Track roster numbers while validating a backup. Before a match-day write, require `P(no).team === team`.
 
@@ -136,19 +136,19 @@ const validEstimate = v => clearValue(v) ||
   (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 300);
 ```
 
-- [ ] **Step 4: Run validation tests and verify GREEN**
+- [x] **Step 4: Run validation tests and verify GREEN**
 
 Run: `node --test test/validation.test.js`
 
 Expected: all new validation tests pass.
 
-- [ ] **Step 5: Run the existing API suite**
+- [x] **Step 5: Run the existing API suite**
 
 Run: `node --test test/api.test.js`
 
 Expected: all existing API tests pass after assigning player 149 to team A before the match-day case.
 
-- [ ] **Step 6: Commit server invariants**
+- [x] **Step 6: Commit server invariants**
 
 ```bash
 git add server.js test/validation.test.js test/api.test.js
@@ -167,7 +167,7 @@ git commit -m "fix: reject invalid team data"
 - Consumes: all Task 1 helpers and the existing localStorage session/outbox keys.
 - Produces: single-flight score saves, valid zero-score logs, local dates, timed requests, photo-frame state transfer, secure offline resume, and guarded coach session saves.
 
-- [ ] **Step 1: Add a failing static integration assertion**
+- [x] **Step 1: Add a failing static integration assertion**
 
 Extend the static-app API test to require the helper names and session-binding key in the served HTML.
 
@@ -178,21 +178,21 @@ assert.match(html, /vox_v3_session_binding/);
 assert.match(html, /fetchWithTimeout/);
 ```
 
-- [ ] **Step 2: Run the static integration test and verify RED**
+- [x] **Step 2: Run the static integration test and verify RED**
 
 Run: `node --test --test-name-pattern="static app" test/api.test.js`
 
 Expected: FAIL because `public/index.html` is not wired to the helpers.
 
-- [ ] **Step 3: Wire score state and submission guards**
+- [x] **Step 3: Wire score state and submission guards**
 
 Initialize entries with `createScoreEntry()`, update them with `updateScoreEntry()`, begin saves with `beginScoreSubmission()`, and clear only `submitting` after a rejected request. Disable the save button while submitting. Preserve the first client ID through retry and outbox insertion. Use score-map key presence so coach session score `0` is saved, and add an equivalent session `saving` guard.
 
-- [ ] **Step 4: Wire local dates, request timeouts, photo frames, and offline resume**
+- [x] **Step 4: Wire local dates, request timeouts, photo frames, and offline resume**
 
 Use `localDate()` for game/session dates and `fetchWithTimeout()` for API calls. Store `{ session, no, isCoach }` under `vox_v3_session_binding` on successful player authentication; clear it on sign-out/expiry. Cache only the static app shell with a service worker, leaving `/api/` requests uncached. On a network-only boot failure, enter cached player mode only when `offlineSessionIdentity()` confirms the binding. Copy the derived frame total/strikes/spares into `S.entry` after photo recognition.
 
-- [ ] **Step 5: Run client integration and syntax checks**
+- [x] **Step 5: Run client integration and syntax checks**
 
 Run: `node --test --test-name-pattern="static app" test/api.test.js`
 
@@ -202,7 +202,7 @@ Run: `npm run check`
 
 Expected: all server, client, test, and inline-script syntax checks pass.
 
-- [ ] **Step 6: Commit browser integration**
+- [x] **Step 6: Commit browser integration**
 
 ```bash
 git add public/index.html test/api.test.js
@@ -218,7 +218,7 @@ git commit -m "fix: harden score logging offline"
 - Consumes: completed Tasks 1–3.
 - Produces: verified branch, pushed GitHub branch, and mergeable pull request.
 
-- [ ] **Step 1: Run the complete checks**
+- [x] **Step 1: Run the complete checks**
 
 Run: `npm run check`
 
@@ -232,7 +232,7 @@ Run: `npm audit --omit=dev`
 
 Expected: zero known production vulnerabilities.
 
-- [ ] **Step 2: Review the final diff**
+- [x] **Step 2: Review the final diff**
 
 Run: `git diff --check origin/main...HEAD`
 
@@ -242,7 +242,7 @@ Run: `git status --short`
 
 Expected: clean worktree after the plan checklist is committed.
 
-- [ ] **Step 3: Commit plan completion**
+- [x] **Step 3: Commit plan completion**
 
 Mark all plan checkboxes complete, then run:
 
@@ -251,7 +251,7 @@ git add docs/superpowers/plans/2026-07-15-reliability-hardening.md
 git commit -m "docs: complete reliability hardening plan"
 ```
 
-- [ ] **Step 4: Push and open the pull request**
+- [x] **Step 4: Push and open the pull request**
 
 ```bash
 git push -u origin codex/reliability-hardening
