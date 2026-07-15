@@ -169,6 +169,11 @@ function validDate(s) {
   const d = new Date(s + 'T00:00:00Z');
   return !isNaN(d) && d.toISOString().slice(0, 10) === s;
 }
+const intIn = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+const clearValue = v => v === null || v === '';
+const validTarget = v => clearValue(v) || intIn(v, 0, 300);
+const validEstimate = v => clearValue(v) ||
+  (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 300);
 // Deterministic id for a legacy (pre-id) game so it stays stable across restarts
 // even if the migration write hasn't landed yet.
 function legacyGameId(no, g, idx) {
@@ -609,14 +614,16 @@ app.delete('/api/games/:no/:id', async (req, res) => {
 
 app.put('/api/players/:no', async (req, res) => { if (!gateCoach(req, res)) return;
   if (!P(req.params.no)) return res.status(404).json({ error: 'unknown player' }); const b = req.body || {};
+  if (b.estAvg !== undefined && !validEstimate(b.estAvg)) return res.status(400).json({ error: 'estimated average must be a number 0–300 or null' });
+  if (b.target !== undefined && !validTarget(b.target)) return res.status(400).json({ error: 'target must be a whole number 0–300 or null' });
   let pubOut;
   await saveAndReply(res, () => {
     const p = P(req.params.no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
     if (b.available !== undefined) p.available = !!b.available;
-    if (b.estAvg   !== undefined) p.estAvg   = (b.estAvg === null || b.estAvg === '') ? null : Number(b.estAvg);
+    if (b.estAvg   !== undefined) p.estAvg   = clearValue(b.estAvg) ? null : b.estAvg;
     if (b.team     !== undefined) p.team     = (['A', 'B', 'C'].includes(b.team)) ? b.team : null;
     if (b.pin      !== undefined) p.pin      = !!b.pin;
-    if (b.target   !== undefined) p.target   = (b.target === null || b.target === '') ? null : Number(b.target);
+    if (b.target   !== undefined) p.target   = clearValue(b.target) ? null : b.target;
     pubOut = pub(p);
   }, () => ({ ok: true, player: pubOut })); });
 
@@ -625,10 +632,11 @@ app.post('/api/mytarget', async (req, res) => {
   const a = authOf(req); if (!a) return res.status(401).json({ error: 'sign in required' });
   const { no, target } = req.body || {}; if (!P(no)) return res.status(404).json({ error: 'unknown player' });
   if (!a.isCoach && Number(a.no) !== Number(no)) return res.status(403).json({ error: 'not your target' });
+  if (!validTarget(target)) return res.status(400).json({ error: 'target must be a whole number 0–300 or null' });
   let out;
   await saveAndReply(res, () => {
     const p = P(no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
-    p.target = (target === null || target === '') ? null : Number(target); out = p.target;
+    p.target = clearValue(target) ? null : target; out = p.target;
   }, () => ({ ok: true, target: out }));
 });
 
@@ -676,6 +684,7 @@ app.post('/api/matchday', async (req, res) => { if (!gateCoach(req, res)) return
   if (b.clear) return saveAndReply(res, () => { state.matchday[team] = {}; }, () => ({ ok: true, matchday: state.matchday }));
   const no = Number(b.no), game = Number(b.game);
   if (!ROSTER_NOS.includes(no) || ![1, 2].includes(game)) return res.status(400).json({ error: 'bad no/game' });
+  if (P(no).team !== team) return res.status(400).json({ error: 'player is not assigned to sub-team ' + team });
   const score = Math.max(0, Math.min(300, parseInt(b.score, 10) || 0));
   const strikes = Math.max(0, Math.min(12, parseInt(b.strikes, 10) || 0));
   const spares = Math.max(0, Math.min(10, parseInt(b.spares, 10) || 0));
@@ -692,7 +701,6 @@ app.post('/api/matchday', async (req, res) => { if (!gateCoach(req, res)) return
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const INVITE_RE = /^[0-9a-f]{16,64}$/;
 const PIN_HASH_RE = /^([0-9a-f]{64}|scrypt:\d{1,8}:\d{1,3}:\d{1,3}:[0-9a-f]{16,64}:[0-9a-f]{32,128})$/;
-const intIn = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 function gameError(g) {
   if (!g || typeof g !== 'object' || Array.isArray(g)) return 'game is not an object';
   if (!intIn(g.score, 0, 300)) return 'game score must be an integer 0–300';
@@ -744,8 +752,11 @@ function validateBackup(b) {
   if (!b || typeof b !== 'object') return 'not an object';
   if (!Array.isArray(b.players)) return 'players must be an array';
   if (b.players.length > 100) return 'too many player entries';
-  const seenIds = new Set();
+  const seenIds = new Set(), seenNos = new Set();
   for (const bk of b.players) {
+    const no = Number(bk && bk.no);
+    if (seenNos.has(no)) return 'duplicate player no ' + no;
+    seenNos.add(no);
     const err = playerEntryError(bk, seenIds);
     if (err) return err;
   }
