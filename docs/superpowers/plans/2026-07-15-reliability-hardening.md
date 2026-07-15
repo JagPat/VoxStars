@@ -159,6 +159,8 @@ git commit -m "fix: reject invalid team data"
 
 **Files:**
 - Modify: `public/index.html`
+- Create: `public/sw.js`
+- Modify: `scripts/check.js`
 - Modify: `test/api.test.js`
 
 **Interfaces:**
@@ -188,7 +190,7 @@ Initialize entries with `createScoreEntry()`, update them with `updateScoreEntry
 
 - [ ] **Step 4: Wire local dates, request timeouts, photo frames, and offline resume**
 
-Use `localDate()` for game/session dates and `fetchWithTimeout()` for API calls. Store `{ session, no, isCoach }` under `vox_v3_session_binding` on successful player authentication; clear it on sign-out/expiry. On a network-only boot failure, enter cached player mode only when `offlineSessionIdentity()` confirms the binding. Copy the derived frame total/strikes/spares into `S.entry` after photo recognition.
+Use `localDate()` for game/session dates and `fetchWithTimeout()` for API calls. Store `{ session, no, isCoach }` under `vox_v3_session_binding` on successful player authentication; clear it on sign-out/expiry. Cache only the static app shell with a service worker, leaving `/api/` requests uncached. On a network-only boot failure, enter cached player mode only when `offlineSessionIdentity()` confirms the binding. Copy the derived frame total/strikes/spares into `S.entry` after photo recognition.
 
 - [ ] **Step 5: Run client integration and syntax checks**
 

@@ -323,4 +323,17 @@ test('static app served and wired to auth API', async () => {
   const html = await r.text();
   assert.ok(/VOX STARS/.test(html));
   assert.ok(/api\/claim/.test(html));
+  assert.match(html, /beginScoreSubmission/);
+  assert.match(html, /offlineSessionIdentity/);
+  assert.match(html, /vox_v3_session_binding/);
+  assert.match(html, /fetchWithTimeout/);
+  assert.match(html, /serviceWorker\.register\('\/sw\.js'\)/, 'app shell is registered for offline reloads');
+  assert.doesNotMatch(html, /id="scoreInput"[^>]*onblur="render\(\)"/, 'score blur must not replace the Save button before its click fires');
+  assert.doesNotMatch(html, /id="sessScore"[^>]*onblur="render\(\)"/, 'session score blur must not replace Next before its click fires');
+
+  const sw = await fetch(srv.base + '/sw.js');
+  assert.equal(sw.status, 200);
+  const worker = await sw.text();
+  assert.match(worker, /caches\.open/);
+  assert.match(worker, /\/api\//, 'service worker must leave API requests uncached');
 });

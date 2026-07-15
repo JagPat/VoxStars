@@ -30,6 +30,8 @@ The session logger will retain its existing per-player client IDs and gain a sub
 
 ### Offline resume and networking
 
+The static app shell (`index.html` and `app-core.js`) is cached by a small service worker so a previously opened installation can load after a true offline reload. API requests and team/player data are never cached by the service worker; the existing authenticated API and localStorage cache remain their sources of truth.
+
 On boot, an unavailable network will not invalidate a stored session. If a cached player identity is bound to that still-present session, the app opens in offline player mode using cached state and can queue a score. It remains visibly local/offline and revalidates with `/api/session` and refreshes state when connectivity returns. Sign-out clears the session and the identity binding, so a signed-out shared device cannot use this fallback.
 
 All API requests use an abort timeout. A timed-out score request follows the existing network-error route into the durable outbox.

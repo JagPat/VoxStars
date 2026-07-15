@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/* Lightweight syntax check (npm run check) for the server, the shared client
-   core, the tests, and every inline <script> block in public/index.html. */
+/* Lightweight syntax check (npm run check) for the server, browser scripts,
+   tests, and every inline <script> block in public/index.html. */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -22,6 +22,7 @@ function check(file, label) {
 const files = [
   'server.js',
   'public/app-core.js',
+  'public/sw.js',
   'scripts/check.js',
   ...fs.readdirSync(path.join(root, 'test')).filter(f => f.endsWith('.js')).map(f => 'test/' + f),
 ];
