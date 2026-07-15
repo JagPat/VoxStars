@@ -54,6 +54,51 @@
     try { if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
     return 'c-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
   }
+
+  function createScoreEntry() {
+    return { score: 0, strikes: 0, spares: 0, entered: false, clientId: null, submitting: false };
+  }
+  function updateScoreEntry(entry, patch) {
+    if (entry && entry.submitting) return entry;
+    return Object.assign({}, entry || createScoreEntry(), patch || {}, {
+      entered: true,
+      clientId: null,
+      submitting: false,
+    });
+  }
+  function beginScoreSubmission(entry, makeId) {
+    if (!entry || !entry.entered || entry.submitting) return { ok: false, entry };
+    const next = Object.assign({}, entry, {
+      clientId: entry.clientId || makeId(),
+      submitting: true,
+    });
+    return { ok: true, entry: next, clientId: next.clientId };
+  }
+  function endScoreSubmission(entry) {
+    return Object.assign({}, entry || createScoreEntry(), { submitting: false });
+  }
+  function localDate(date) {
+    const d = date || new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+  function offlineSessionIdentity(session, binding, knownNos) {
+    if (!session || !binding || binding.session !== session || !Array.isArray(knownNos)) return null;
+    const no = Number(binding.no);
+    if (!knownNos.some(x => Number(x) === no)) return null;
+    return { no, isCoach: binding.isCoach === true };
+  }
+  async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
+    const controller = new AbortController();
+    const timeout = Math.max(1, Number(timeoutMs) || 10000);
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetchImpl(url, Object.assign({}, options || {}, { signal: controller.signal }));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   function createOutbox(opts) {
     const storage = opts.storage, key = opts.key, send = opts.send;
     let busy = false;
@@ -103,5 +148,9 @@
     };
   }
 
-  return { esc, idAttr, frameState, frameComplete, rollTxt, createOutbox, uuid };
+  return {
+    esc, idAttr, frameState, frameComplete, rollTxt, createOutbox, uuid,
+    createScoreEntry, updateScoreEntry, beginScoreSubmission, endScoreSubmission,
+    localDate, offlineSessionIdentity, fetchWithTimeout,
+  };
 });

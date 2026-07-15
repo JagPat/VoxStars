@@ -2,7 +2,11 @@
    the exact code the browser runs. */
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { frameState, frameComplete, rollTxt } = require('../public/app-core.js');
+const {
+  frameState, frameComplete, rollTxt,
+  createScoreEntry, updateScoreEntry, beginScoreSubmission, endScoreSubmission,
+  localDate, offlineSessionIdentity, fetchWithTimeout,
+} = require('../public/app-core.js');
 
 const rep = (v, n) => Array.from({ length: n }, () => v);
 
@@ -120,4 +124,54 @@ test('rollTxt renders X, /, - and pin counts', () => {
   assert.equal(rollTxt([7, 2], 1, 0), '2');
   assert.equal(rollTxt([10, 10, 10], 1, 9), 'X', 'tenth-frame second strike');
   assert.equal(rollTxt([4, 6, 10], 1, 9), '/', 'tenth-frame spare');
+});
+
+test('an explicitly entered gutter score is submittable', () => {
+  const untouched = createScoreEntry();
+  assert.equal(beginScoreSubmission(untouched, () => 'unused').ok, false, 'untouched form is not a game');
+  const entered = updateScoreEntry(untouched, { score: 0 });
+  const started = beginScoreSubmission(entered, () => 'gutter-1');
+  assert.equal(started.ok, true);
+  assert.equal(started.entry.score, 0);
+  assert.equal(started.clientId, 'gutter-1');
+});
+
+test('score submission is single-flight and reuses its id on retry', () => {
+  const entered = updateScoreEntry(createScoreEntry(), { score: 140 });
+  const first = beginScoreSubmission(entered, () => 'score-1');
+  assert.equal(first.ok, true);
+  assert.equal(beginScoreSubmission(first.entry, () => 'score-2').ok, false, 'double tap is ignored while saving');
+  assert.equal(updateScoreEntry(first.entry, { score: 141 }).score, 140, 'entry cannot change mid-submit');
+  const retry = beginScoreSubmission(endScoreSubmission(first.entry), () => 'score-2');
+  assert.equal(retry.ok, true);
+  assert.equal(retry.clientId, 'score-1', 'lost-response retry keeps the original id');
+  const edited = updateScoreEntry(endScoreSubmission(retry.entry), { score: 141 });
+  const changed = beginScoreSubmission(edited, () => 'score-3');
+  assert.equal(changed.clientId, 'score-3', 'editing creates a new mutation');
+});
+
+test('localDate formats the browser calendar day instead of UTC', () => {
+  const localMidnight = new Date(2026, 6, 16, 0, 30, 0);
+  assert.equal(localDate(localMidnight), '2026-07-16');
+});
+
+test('offline resume requires a session-matching known-player binding', () => {
+  const binding = { session: 'session-a', no: 99, isCoach: false };
+  assert.deepEqual(offlineSessionIdentity('session-a', binding, [99, 149]), { no: 99, isCoach: false });
+  assert.equal(offlineSessionIdentity('session-b', binding, [99, 149]), null, 'another session cannot reuse the binding');
+  assert.equal(offlineSessionIdentity('session-a', binding, [149]), null, 'unknown cached player is rejected');
+});
+
+test('fetchWithTimeout aborts a stalled request', async () => {
+  const stalledFetch = (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      reject(err);
+    }, { once: true });
+  });
+  await assert.rejects(
+    fetchWithTimeout(stalledFetch, '/api/state', {}, 5),
+    err => err && err.name === 'AbortError',
+  );
 });
