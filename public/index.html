@@ -47,7 +47,7 @@
 const {
   esc,idAttr,frameState,frameComplete,rollTxt,createOutbox,
   createScoreEntry,updateScoreEntry,beginScoreSubmission,endScoreSubmission,
-  localDate,offlineSessionIdentity,fetchWithTimeout
+  localDate,offlineSessionIdentity,teamSplitError,fetchWithTimeout
 }=window.VoxCore;
 /* ============ REAL ROSTER (VOX STARS, IncrediBowl S2) ============ */
 const ROSTER=[
@@ -681,6 +681,7 @@ function nudge(no){const p=P(no),first=shortName(p.name).split(' ')[0];const msg
 function logForThem(no){S.logTarget=no;S.sheet='log';S.scorer='quick';S.entry=createScoreEntry();S.rolls=[];render()}
 function setStrategy(x){S.strategy=x;coachAction('PUT','/api/settings',{splitStrategy:x},()=>{settings.splitStrategy=x});render()}
 function applySplit(){const t=buildTeams(S.strategy);const a={};['A','B','C'].forEach(k=>t[k].forEach(p=>a[p.no]=k));
+  const err=teamSplitError(players,a,settings.capCr||25,LEADS);if(err){toast("Can't apply this split",err+" Adjust the pinned players and try again.");return}
   coachAction('POST','/api/teams',{assignments:a},()=>{players.forEach(p=>p.team=a[p.no]||null);S.applied=S.strategy;render();toast("Split applied","Sub-teams updated for the whole team")})}
 /* session */
 function setLane(n){if(S.session.saving)return;S.session.lane=n;render()}

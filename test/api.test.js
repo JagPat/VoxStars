@@ -263,6 +263,56 @@ test('import validates strictly and dedupes', async () => {
   assert.equal(r.status, 400, 'malformed import rejected');
 });
 
+test('import preserves distinct same-day games with matching score and strikes', async () => {
+  const games = [
+    { score: 155, strikes: 3, spares: 1, date: '2026-07-20', ts: 1001 },
+    { score: 155, strikes: 3, spares: 4, date: '2026-07-20', ts: 1002 },
+  ];
+  const r = await req('POST', '/api/import', {
+    body: { players: [{ no: 114, games }] },
+    coachSession,
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.added, 2, 'neither legitimate game should be discarded');
+});
+
+test('moving a player to another team clears stale match-day entries', async () => {
+  let r = await req('PUT', '/api/players/38', { body: { team: 'A' }, coachSession });
+  assert.equal(r.status, 200);
+  r = await req('POST', '/api/matchday', {
+    body: { team: 'A', no: 38, game: 1, score: 177, strikes: 4, spares: 2 },
+    coachSession,
+  });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.matchday.A['38-1']);
+
+  r = await req('PUT', '/api/players/38', { body: { team: 'B' }, coachSession });
+  assert.equal(r.status, 200);
+  r = await req('GET', '/api/state', { coachSession });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.matchday.A['38-1'], undefined);
+});
+
+test('batch team assignment rejects an invalid complete split and clears moved-player match-day data', async () => {
+  const allA = Object.fromEntries([149, 171, 175, 99, 31, 22, 114, 38, 137, 8, 128, 41, 49, 43, 82].map(no => [no, 'A']));
+  let r = await req('POST', '/api/teams', { body: { assignments: allA }, coachSession });
+  assert.equal(r.status, 400, 'server must reject a split that bypasses tournament constraints');
+
+  r = await req('PUT', '/api/players/149', { body: { team: 'A' }, coachSession });
+  assert.equal(r.status, 200);
+  r = await req('POST', '/api/matchday', {
+    body: { team: 'A', no: 149, game: 2, score: 188 },
+    coachSession,
+  });
+  assert.equal(r.status, 200);
+  r = await req('POST', '/api/teams', { body: { assignments: { 149: 'B' } }, coachSession });
+  assert.equal(r.status, 200);
+  r = await req('GET', '/api/state', { coachSession });
+  assert.equal(r.body.matchday.A['149-2'], undefined);
+  r = await req('POST', '/api/teams', { body: { assignments: { 149: 'A' } }, coachSession });
+  assert.equal(r.status, 200);
+});
+
 test('match day flow', async () => {
   let r = await req('POST', '/api/matchday', { body: { team: 'A', no: 149, game: 1, score: 185, strikes: 5, spares: 2 }, coachSession });
   assert.equal(r.status, 200);

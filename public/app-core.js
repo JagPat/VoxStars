@@ -88,6 +88,27 @@
     if (!knownNos.some(x => Number(x) === no)) return null;
     return { no, isCoach: binding.isCoach === true };
   }
+  function teamSplitError(roster, assignments, cap, leads) {
+    if (!Array.isArray(roster) || !assignments || typeof assignments !== 'object') return 'Team split is incomplete.';
+    const teams = { A: [], B: [], C: [] };
+    for (const player of roster) {
+      const team = assignments[player.no];
+      if (!teams[team]) return 'Every player must be assigned to a team.';
+      teams[team].push(player);
+    }
+    for (const team of ['A', 'B', 'C']) {
+      const list = teams[team];
+      if (list.length !== 5) return `Sub-team ${team} must have exactly five players.`;
+      if (list.filter(p => p.g === 'F').length !== 1) return `Sub-team ${team} must have exactly one woman.`;
+      if (list.filter(p => p.g === 'M').length !== 4) return `Sub-team ${team} must have exactly four men.`;
+      const value = list.reduce((sum, p) => sum + (Number(p.pt) || 0), 0);
+      if (value > Number(cap)) return `Sub-team ${team} exceeds the ${cap} Cr cap.`;
+      if (leads && assignments[leads[team]] !== team) {
+        return `The fixed lead for Sub-team ${team} must remain in that team.`;
+      }
+    }
+    return null;
+  }
   async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
     const controller = new AbortController();
     const timeout = Math.max(1, Number(timeoutMs) || 10000);
@@ -151,6 +172,6 @@
   return {
     esc, idAttr, frameState, frameComplete, rollTxt, createOutbox, uuid,
     createScoreEntry, updateScoreEntry, beginScoreSubmission, endScoreSubmission,
-    localDate, offlineSessionIdentity, fetchWithTimeout,
+    localDate, offlineSessionIdentity, teamSplitError, fetchWithTimeout,
   };
 });

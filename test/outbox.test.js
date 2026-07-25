@@ -127,3 +127,26 @@ test('esc() neutralises executable markup from imported/displayed data', () => {
   assert.equal(idAttr('abc-123_XYZ'), 'abc-123_XYZ', 'safe ids unchanged');
   assert.equal(idAttr("x') ; alert(1)//"), 'xalert1', 'attribute injection stripped from ids');
 });
+
+test('team split validation enforces size, gender, cap, and fixed leads', () => {
+  const roster = [
+    { no: 1, g: 'M', pt: 2 }, { no: 2, g: 'M', pt: 2 }, { no: 3, g: 'M', pt: 2 },
+    { no: 4, g: 'F', pt: 2 }, { no: 5, g: 'F', pt: 2 }, { no: 6, g: 'F', pt: 2 },
+    { no: 7, g: 'M', pt: 2 }, { no: 8, g: 'M', pt: 2 }, { no: 9, g: 'M', pt: 2 },
+    { no: 10, g: 'M', pt: 2 }, { no: 11, g: 'M', pt: 2 }, { no: 12, g: 'M', pt: 2 },
+    { no: 13, g: 'M', pt: 2 }, { no: 14, g: 'M', pt: 2 }, { no: 15, g: 'M', pt: 2 },
+  ];
+  const valid = {
+    1: 'A', 2: 'B', 3: 'C', 4: 'A', 5: 'B', 6: 'C',
+    7: 'A', 8: 'A', 9: 'A', 10: 'B', 11: 'B', 12: 'B', 13: 'C', 14: 'C', 15: 'C',
+  };
+  assert.equal(VoxCore.teamSplitError(roster, valid, 25, { A: 1, B: 2, C: 3 }), null);
+
+  const twoWomenInA = { ...valid, 5: 'A', 7: 'B' };
+  assert.match(VoxCore.teamSplitError(roster, twoWomenInA, 25, { A: 1, B: 2, C: 3 }), /one woman/i);
+
+  const wrongLead = { ...valid, 1: 'B', 2: 'A' };
+  assert.match(VoxCore.teamSplitError(roster, wrongLead, 25, { A: 1, B: 2, C: 3 }), /lead/i);
+
+  assert.match(VoxCore.teamSplitError(roster, valid, 9, { A: 1, B: 2, C: 3 }), /cap/i);
+});

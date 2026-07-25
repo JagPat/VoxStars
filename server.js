@@ -14,6 +14,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { teamSplitError } = require('./public/app-core');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 const IS_TEST = process.env.NODE_ENV === 'test';
@@ -65,6 +66,14 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const ROSTER_NOS = [149, 171, 175, 99, 31, 22, 114, 38, 137, 8, 128, 41, 49, 43, 82];
 const COACH_NOS  = [149, 171, 175]; // Captain (149) + Vice-Captains (171, 175) — full access by identity
+const ROSTER_INFO = [
+  { no: 149, g: 'M', pt: 2 }, { no: 171, g: 'M', pt: 1 }, { no: 175, g: 'M', pt: 1 },
+  { no: 99, g: 'M', pt: 4 }, { no: 31, g: 'F', pt: 7 }, { no: 22, g: 'F', pt: 10 },
+  { no: 114, g: 'M', pt: 6 }, { no: 38, g: 'M', pt: 10 }, { no: 137, g: 'M', pt: 3 },
+  { no: 8, g: 'F', pt: 2 }, { no: 128, g: 'M', pt: 4 }, { no: 41, g: 'M', pt: 4 },
+  { no: 49, g: 'M', pt: 2 }, { no: 43, g: 'M', pt: 2 }, { no: 82, g: 'M', pt: 2 },
+];
+const TEAM_LEADS = { A: 149, B: 171, C: 175 };
 
 /* ---------------- crypto helpers ---------------- */
 const sha256hex = s => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -386,6 +395,13 @@ function revokePlayerSessions(no) {
 function revokeAllPlayerBoundSessions() {
   for (const k of Object.keys(state.sessions)) if (state.sessions[k].no != null) delete state.sessions[k];
 }
+function clearStaleMatchdayEntries(no, assignedTeam) {
+  for (const team of ['A', 'B', 'C']) {
+    if (team === assignedTeam) continue;
+    delete state.matchday[team][no + '-1'];
+    delete state.matchday[team][no + '-2'];
+  }
+}
 setInterval(() => {
   if (degraded || !state) return;
   let any = false;
@@ -621,7 +637,10 @@ app.put('/api/players/:no', async (req, res) => { if (!gateCoach(req, res)) retu
     const p = P(req.params.no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
     if (b.available !== undefined) p.available = !!b.available;
     if (b.estAvg   !== undefined) p.estAvg   = clearValue(b.estAvg) ? null : b.estAvg;
-    if (b.team     !== undefined) p.team     = (['A', 'B', 'C'].includes(b.team)) ? b.team : null;
+    if (b.team     !== undefined) {
+      p.team = (['A', 'B', 'C'].includes(b.team)) ? b.team : null;
+      clearStaleMatchdayEntries(p.no, p.team);
+    }
     if (b.pin      !== undefined) p.pin      = !!b.pin;
     if (b.target   !== undefined) p.target   = clearValue(b.target) ? null : b.target;
     pubOut = pub(p);
@@ -642,8 +661,16 @@ app.post('/api/mytarget', async (req, res) => {
 
 app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
   const a = (req.body && req.body.assignments) || {};
+  const next = Object.fromEntries(state.players.map(p => [p.no, Object.prototype.hasOwnProperty.call(a, p.no) ? a[p.no] : p.team]));
+  if (Object.values(next).every(team => ['A', 'B', 'C'].includes(team))) {
+    const err = teamSplitError(ROSTER_INFO, next, state.settings.capCr, TEAM_LEADS);
+    if (err) return res.status(400).json({ error: err });
+  }
   await saveAndReply(res, () => {
-    Object.keys(a).forEach(no => { const p = P(no); if (p) p.team = ['A', 'B', 'C'].includes(a[no]) ? a[no] : null; });
+    Object.keys(a).forEach(no => { const p = P(no); if (p) {
+      p.team = ['A', 'B', 'C'].includes(a[no]) ? a[no] : null;
+      clearStaleMatchdayEntries(p.no, p.team);
+    } });
   }, { ok: true }); });
 function applySettings(b) {
   ['defaultAvg', 'capCr'].forEach(k => {
@@ -665,8 +692,14 @@ app.post('/api/import', async (req, res) => { if (!gateCoach(req, res)) return;
   await saveAndReply(res, () => {
     let added = 0;
     incoming.forEach(ip => { const p = P(ip.no); if (!p) return; (ip.games || []).forEach((g, i) => {
-      const dup = p.games.some(x => (g.id && x.id === g.id) || (g.clientId && x.clientId === g.clientId) ||
-        (x.date === g.date && x.score === g.score && x.strikes === g.strikes));
+      const dup = p.games.some(x => {
+        if (g.id) return x.id === g.id;
+        if (g.clientId) return x.clientId === g.clientId;
+        return x.date === g.date && x.score === g.score &&
+          (x.strikes || 0) === (g.strikes || 0) && (x.spares || 0) === (g.spares || 0) &&
+          (x.ts || 0) === (g.ts || 0) && (x.by || 'self') === (g.by || 'self') &&
+          !!x.verified === !!g.verified;
+      });
       if (!dup) { p.games.push(cleanGame(g, ip.no, i)); added++; } }); });
     return { added };
   }, r => ({ ok: true, added: r.added })); });
