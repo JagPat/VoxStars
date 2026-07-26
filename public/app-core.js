@@ -56,11 +56,15 @@
   }
 
   function createScoreEntry() {
-    return { score: 0, strikes: 0, spares: 0, entered: false, clientId: null, submitting: false };
+    return { score: 0, strikes: 0, spares: 0, strikesEntered: false, sparesEntered: false,
+      entered: false, clientId: null, submitting: false };
   }
   function updateScoreEntry(entry, patch) {
     if (entry && entry.submitting) return entry;
-    return Object.assign({}, entry || createScoreEntry(), patch || {}, {
+    const evidence = {};
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'strikes')) evidence.strikesEntered = true;
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'spares')) evidence.sparesEntered = true;
+    return Object.assign({}, entry || createScoreEntry(), patch || {}, evidence, {
       entered: true,
       clientId: null,
       submitting: false,

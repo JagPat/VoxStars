@@ -204,9 +204,15 @@ function normalize(s) {
         score: Math.max(0, Math.min(300, Math.round(Number(g.score) || 0))),
         strikes: Math.max(0, Math.min(12, Math.round(Number(g.strikes) || 0))),
         spares: Math.max(0, Math.min(10, Math.round(Number(g.spares) || 0))),
+        strikesRecorded: g.strikesRecorded === true,
+        sparesRecorded: g.sparesRecorded === true,
+        optimizerIncluded: g.optimizerIncluded !== false,
+        optimizerExclusionReason: g.optimizerIncluded === false && typeof g.optimizerExclusionReason === 'string'
+          ? g.optimizerExclusionReason.slice(0, 160) : null,
         date: g.date, ts: Number(g.ts) || 0,
         verified: !!g.verified, by: g.by === 'coach' ? 'coach' : 'self',
       };
+      if (g.strikesRecorded === undefined || g.sparesRecorded === undefined || g.optimizerIncluded === undefined) changed = true;
       if (!out.id) { out.id = legacyGameId(no, out, idx); changed = true; } // legacy games: stable id
       if (!validDate(out.date)) {
         out.date = out.ts ? new Date(out.ts).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
@@ -578,13 +584,15 @@ app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
 app.post('/api/games', async (req, res) => {
   const a = authOf(req);
   if (!a) return res.status(401).json({ error: 'sign in required' });
-  const { no, score, strikes, spares, date, clientId } = req.body || {};
+  const { no, score, strikes, spares, strikesRecorded, sparesRecorded, date, clientId } = req.body || {};
   const p = P(no); if (!p) return res.status(404).json({ error: 'unknown player' });
   if (!a.isCoach && Number(a.no) !== Number(no)) return res.status(403).json({ error: 'you can only log your own games' });
   const sc = Number(score);
   if (!(Number.isInteger(sc) && sc >= 0 && sc <= 300)) return res.status(400).json({ error: 'score must be a whole number 0–300' });
   if (date !== undefined && date !== null && date !== '' && !validDate(String(date))) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
   if (clientId !== undefined && clientId !== null && !ID_RE.test(String(clientId))) return res.status(400).json({ error: 'bad clientId' });
+  if (strikesRecorded !== undefined && typeof strikesRecorded !== 'boolean') return res.status(400).json({ error: 'strikesRecorded must be boolean' });
+  if (sparesRecorded !== undefined && typeof sparesRecorded !== 'boolean') return res.status(400).json({ error: 'sparesRecorded must be boolean' });
   const isCoachWrite = a.isCoach;
   await saveAndReply(res, () => {
     const cur = P(no); if (!cur) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; } // re-fetch after any revert
@@ -594,6 +602,8 @@ app.post('/api/games', async (req, res) => {
     }
     const game = { id: crypto.randomUUID(),
       score: sc, strikes: Math.max(0, Math.min(12, Math.round(Number(strikes) || 0))), spares: Math.max(0, Math.min(10, Math.round(Number(spares) || 0))),
+      strikesRecorded: strikesRecorded === true, sparesRecorded: sparesRecorded === true,
+      optimizerIncluded: true, optimizerExclusionReason: null,
       date: (date && validDate(String(date))) ? String(date) : new Date().toISOString().slice(0, 10),
       ts: gameNow(), verified: !!isCoachWrite, by: isCoachWrite ? 'coach' : 'self' };
     if (clientId) game.clientId = String(clientId);
@@ -610,6 +620,22 @@ app.post('/api/games/:no/:id/verify', async (req, res) => { if (!gateCoach(req, 
     if (!g) { const e = new Error('unknown game'); e.httpStatus = 404; throw e; }
     g.verified = !g.verified; flipped = g.verified;
   }, () => ({ ok: true, verified: flipped })); });
+app.put('/api/games/:no/:id/optimizer-status', async (req, res) => {
+  if (!gateCoach(req, res)) return;
+  const included = (req.body || {}).included;
+  const reason = String((req.body || {}).reason || '').trim();
+  if (typeof included !== 'boolean' || reason.length > 160) {
+    return res.status(400).json({ error: 'included must be boolean and reason at most 160 characters' });
+  }
+  await saveAndReply(res, () => {
+    const p = P(req.params.no);
+    const game = p && p.games.find(g => String(g.id) === String(req.params.id));
+    if (!game) { const e = new Error('unknown game'); e.httpStatus = 404; throw e; }
+    game.optimizerIncluded = included;
+    game.optimizerExclusionReason = included ? null : (reason || null);
+    return game;
+  }, game => ({ ok: true, game }));
+});
 app.delete('/api/games/:no/:id', async (req, res) => {
   const a = authOf(req); if (!a) return res.status(401).json({ error: 'sign in required' });
   const no = req.params.no;
@@ -733,6 +759,11 @@ function gameError(g) {
   if (!intIn(g.score, 0, 300)) return 'game score must be an integer 0–300';
   if (g.strikes !== undefined && !intIn(g.strikes, 0, 12)) return 'strikes must be an integer 0–12';
   if (g.spares !== undefined && !intIn(g.spares, 0, 10)) return 'spares must be an integer 0–10';
+  if (g.strikesRecorded !== undefined && typeof g.strikesRecorded !== 'boolean') return 'bad strikesRecorded flag';
+  if (g.sparesRecorded !== undefined && typeof g.sparesRecorded !== 'boolean') return 'bad sparesRecorded flag';
+  if (g.optimizerIncluded !== undefined && typeof g.optimizerIncluded !== 'boolean') return 'bad optimizerIncluded flag';
+  if (g.optimizerExclusionReason !== undefined && g.optimizerExclusionReason !== null &&
+      (typeof g.optimizerExclusionReason !== 'string' || g.optimizerExclusionReason.length > 160)) return 'bad optimizer exclusion reason';
   if (!validDate(g.date)) return 'game date must be a valid YYYY-MM-DD';
   if (g.id !== undefined && g.id !== null && !ID_RE.test(String(g.id))) return 'bad game id';
   if (g.clientId !== undefined && g.clientId !== null && !ID_RE.test(String(g.clientId))) return 'bad game clientId';
@@ -748,6 +779,11 @@ function cleanGame(g, no, idx) {
     score: g.score,
     strikes: intIn(g.strikes, 0, 12) ? g.strikes : 0,
     spares: intIn(g.spares, 0, 10) ? g.spares : 0,
+    strikesRecorded: g.strikesRecorded === true,
+    sparesRecorded: g.sparesRecorded === true,
+    optimizerIncluded: g.optimizerIncluded !== false,
+    optimizerExclusionReason: g.optimizerIncluded === false && typeof g.optimizerExclusionReason === 'string'
+      ? g.optimizerExclusionReason.slice(0, 160) : null,
     date: g.date,
     ts: (Number.isFinite(g.ts) && g.ts >= 0) ? g.ts : (Date.parse(g.date + 'T00:00:00Z') || Date.now()),
     verified: g.verified === true, by: g.by === 'coach' ? 'coach' : 'self',

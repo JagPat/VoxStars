@@ -186,7 +186,7 @@ async function coachAction(m,path,body,ok){try{const r=await apiSend(m,path,body
   catch(e){if(e&&e.auth){toast("Coach access needed","Unlock the cockpit first");openCoachPin()}else if(e&&e.forbidden){toast("Not allowed","That isn't yours to change")}else if(e&&(e.bad||e.locked)){toast("Rejected",e.message||'Invalid request')}else if(e&&e.server){toast("Not saved",e.message||'Server could not save — try again')}else{setOnline(false);toast("No server","Open your Coolify URL / localhost:3000 to save")}}}
 
 /* ============ DURABLE OUTBOX (offline-safe score entry) ============ */
-const outbox=createOutbox({storage:localStorage,key:OBK,send:e=>apiSend('POST','/api/games',{no:e.no,score:e.score,strikes:e.strikes,spares:e.spares,date:e.date,clientId:e.clientId})});
+const outbox=createOutbox({storage:localStorage,key:OBK,send:e=>apiSend('POST','/api/games',{no:e.no,score:e.score,strikes:e.strikes,spares:e.spares,strikesRecorded:e.strikesRecorded===true,sparesRecorded:e.sparesRecorded===true,date:e.date,clientId:e.clientId})});
 let _flushing=false;
 /* only sync entries the current sign-in is allowed to write, so a different
    user on this device never spams 403s for someone else's queued scores */
@@ -618,7 +618,7 @@ function undoRoll(){if(S.entry.submitting)return;S.rolls=S.rolls.slice(0,-1);con
 function clearRolls(){if(S.entry.submitting)return;S.rolls=[];S.entry=createScoreEntry();render()}
 async function saveLog(){const started=beginScoreSubmission(S.entry,outbox.newClientId);if(!started.ok){if(S.entry.submitting)return;toast("Enter a score","Tap ＋ or type a final score");return}
   S.entry=started.entry;render();const e=S.entry;
-  const no=S.logTarget||ui.me,p=P(no),body={no,score:e.score,strikes:e.strikes,spares:e.spares,date:localDate(),clientId:started.clientId};
+  const no=S.logTarget||ui.me,p=P(no),body={no,score:e.score,strikes:e.strikes,spares:e.spares,strikesRecorded:e.strikesEntered===true,sparesRecorded:e.sparesEntered===true,date:localDate(),clientId:started.clientId};
   const wasBest=disp(p).best;
   try{const{game}=await apiSend('POST','/api/games',body);S._prevMe={no,game};p.games.push(game);cacheSave();setOnline(true);
     S.entry=endScoreSubmission(S.entry);S.sheet=null;const nb=e.score>=wasBest;toast(nb?'New personal best! 🎳':'Game logged',e.score+' pins · avg now '+disp(p).avg);render()}
