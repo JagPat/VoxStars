@@ -165,7 +165,8 @@ function blankPlayer(no) {
 function defaultState() {
   return { players: ROSTER_NOS.map(blankPlayer),
     settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A' },
-    sessions: {}, matchday: { A: {}, B: {}, C: {} }, installId: newToken(), updatedAt: Date.now() };
+    sessions: {}, matchday: { A: {}, B: {}, C: {} }, teamSubmission: null, teamSubmissionAudit: [],
+    installId: newToken(), updatedAt: Date.now() };
 }
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function validDate(s) {
@@ -178,6 +179,27 @@ const clearValue = v => v === null || v === '';
 const validTarget = v => clearValue(v) || intIn(v, 0, 300);
 const validEstimate = v => clearValue(v) ||
   (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 300);
+function cleanSubmission(value) {
+  if (!value || typeof value !== 'object' || !Number.isFinite(value.submittedAt) ||
+      !Number.isFinite(value.assignmentVersion)) return null;
+  const out = { submittedAt: value.submittedAt, submittedBy: value.submittedBy ?? 'coach',
+    assignmentVersion: value.assignmentVersion };
+  if (Number.isFinite(value.unlockedAt)) out.unlockedAt = value.unlockedAt;
+  if (value.unlockedBy !== undefined) out.unlockedBy = value.unlockedBy;
+  if (typeof value.unlockReason === 'string') out.unlockReason = value.unlockReason.slice(0, 160);
+  return out;
+}
+function cleanAudit(value) {
+  if (!value || typeof value !== 'object' || !Number.isFinite(value.submittedAt) ||
+      !Number.isFinite(value.unlockedAt) || typeof value.reason !== 'string' ||
+      value.reason.length < 5 || value.reason.length > 160 || !value.priorAssignments ||
+      Object.values(value.priorAssignments).some(team => !['A', 'B', 'C'].includes(team))) return null;
+  return { submittedAt: value.submittedAt, unlockedAt: value.unlockedAt,
+    unlockedBy: value.unlockedBy ?? 'coach', reason: value.reason,
+    priorAssignments: Object.fromEntries(Object.entries(value.priorAssignments).map(([no, team]) => [Number(no), team])) };
+}
+const isSubmissionLocked = submission => !!(submission && submission.submittedAt &&
+  !(Number(submission.unlockedAt) > Number(submission.submittedAt)));
 // Deterministic id for a legacy (pre-id) game so it stays stable across restarts
 // even if the migration write hasn't landed yet.
 function legacyGameId(no, g, idx) {
@@ -243,12 +265,16 @@ function normalize(s) {
   });
   const matchday = (s.matchday && typeof s.matchday === 'object') ? s.matchday : { A: {}, B: {}, C: {} };
   ['A', 'B', 'C'].forEach(k => { if (!matchday[k] || typeof matchday[k] !== 'object') matchday[k] = {}; });
+  const teamSubmission = s.teamSubmission == null ? null : cleanSubmission(s.teamSubmission);
+  if (s.teamSubmission !== undefined && s.teamSubmission !== null && !teamSubmission) changed = true;
+  const teamSubmissionAudit = Array.isArray(s.teamSubmissionAudit) ? s.teamSubmissionAudit.map(cleanAudit).filter(Boolean).slice(-100) : [];
+  if (!Array.isArray(s.teamSubmissionAudit) || teamSubmissionAudit.length !== s.teamSubmissionAudit.length) changed = true;
   return {
     changed,
     state: {
       players,
       settings: Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A' }, (s.settings && typeof s.settings === 'object') ? s.settings : {}),
-      sessions, matchday,
+      sessions, matchday, teamSubmission, teamSubmissionAudit,
       installId: (typeof s.installId === 'string' && s.installId) ? s.installId : newToken(),
       updatedAt: Number(s.updatedAt) || Date.now(),
     },
@@ -549,13 +575,20 @@ app.get('/api/health', (req, res) => {
 app.get('/api/state', (req, res) => {
   // Requires any valid player or coach session: signed-in team-mates see the
   // whole squad; the public / logged-out cannot read scores. Secrets stripped.
-  if (!authOf(req)) return res.status(401).json({ error: 'sign in to view team data' });
-  res.json({ players: state.players.map(({ authPin, inviteToken, ...rest }) => rest), settings: state.settings, matchday: state.matchday, updatedAt: state.updatedAt, installId: state.installId });
+  const auth = authOf(req);
+  if (!auth) return res.status(401).json({ error: 'sign in to view team data' });
+  const safePlayers = state.players.map(({ authPin, inviteToken, ...rest }) => rest);
+  const submission = state.teamSubmission && { submittedAt: state.teamSubmission.submittedAt,
+    assignmentVersion: state.teamSubmission.assignmentVersion, locked: isSubmissionLocked(state.teamSubmission) };
+  const coachOnly = auth.isCoach ? { teamSubmissionAudit: state.teamSubmissionAudit } : {};
+  res.json({ players: safePlayers, settings: state.settings, matchday: state.matchday,
+    teamSubmission: submission, ...coachOnly, updatedAt: state.updatedAt, installId: state.installId });
 });
 
 // Coach: download a full backup snapshot (players + games + settings)
 app.get('/api/backup', (req, res) => { if (!gateCoach(req, res)) return;
-  res.json({ voxstars: 1, exportedAt: Date.now(), players: state.players, settings: state.settings, matchday: state.matchday }); });
+  res.json({ voxstars: 1, exportedAt: Date.now(), players: state.players, settings: state.settings,
+    matchday: state.matchday, teamSubmission: state.teamSubmission, teamSubmissionAudit: state.teamSubmissionAudit }); });
 // Coach: restore from a backup snapshot (brings back games, PINs, teams, targets)
 app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
   const b = req.body || {};
@@ -575,6 +608,8 @@ app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
     });
     if (b.settings) applySettings(b.settings);
     if (b.matchday) state.matchday = cleanMatchday(b.matchday);
+    state.teamSubmission = b.teamSubmission ? cleanSubmission(b.teamSubmission) : null;
+    state.teamSubmissionAudit = Array.isArray(b.teamSubmissionAudit) ? b.teamSubmissionAudit.map(cleanAudit).filter(Boolean).slice(-100) : [];
     revokeAllPlayerBoundSessions(); // restored PINs/identities replace live ones
   }, { ok: true, restored: b.players.length });
 });
@@ -651,10 +686,12 @@ app.delete('/api/games/:no/:id', async (req, res) => {
 
 app.put('/api/players/:no', async (req, res) => { if (!gateCoach(req, res)) return;
   if (!P(req.params.no)) return res.status(404).json({ error: 'unknown player' }); const b = req.body || {};
+  if (b.team !== undefined && isSubmissionLocked(state.teamSubmission)) return res.status(423).json({ error: 'team list is submitted and locked', submittedAt: state.teamSubmission.submittedAt });
   if (b.estAvg !== undefined && !validEstimate(b.estAvg)) return res.status(400).json({ error: 'estimated average must be a number 0–300 or null' });
   if (b.target !== undefined && !validTarget(b.target)) return res.status(400).json({ error: 'target must be a whole number 0–300 or null' });
   let pubOut;
   await saveAndReply(res, () => {
+    if (b.team !== undefined && isSubmissionLocked(state.teamSubmission)) { const e = new Error('team list is submitted and locked'); e.httpStatus = 423; throw e; }
     const p = P(req.params.no); if (!p) { const e = new Error('unknown player'); e.httpStatus = 404; throw e; }
     if (b.available !== undefined) p.available = !!b.available;
     if (b.estAvg   !== undefined) p.estAvg   = clearValue(b.estAvg) ? null : b.estAvg;
@@ -727,7 +764,43 @@ app.post('/api/optimizer/evaluate', (req, res) => {
   });
 });
 
+app.post('/api/teams/submit', async (req, res) => {
+  if (!gateCoach(req, res)) return;
+  const assignmentVersion = (req.body || {}).assignmentVersion;
+  if (!Number.isFinite(assignmentVersion) || assignmentVersion !== state.updatedAt) {
+    return res.status(409).json({ error: 'team data changed — refresh before submitting' });
+  }
+  const assignments = Object.fromEntries(state.players.map(p => [p.no, p.team]));
+  const err = teamSplitError(ROSTER_INFO, assignments, state.settings.capCr, TEAM_LEADS);
+  if (err) return res.status(400).json({ error: err });
+  const actor = authOf(req).no ?? 'coach';
+  await saveAndReply(res, () => {
+    if (assignmentVersion !== state.updatedAt) { const e = new Error('team data changed — refresh before submitting'); e.httpStatus = 409; throw e; }
+    if (isSubmissionLocked(state.teamSubmission)) { const e = new Error('team list is already submitted'); e.httpStatus = 423; throw e; }
+    state.teamSubmission = { submittedAt: gameNow(), submittedBy: actor, assignmentVersion };
+    return state.teamSubmission;
+  }, submission => ({ ok: true, submission }));
+});
+
+app.post('/api/teams/unlock', async (req, res) => {
+  if (!gateCoach(req, res)) return;
+  const reason = String((req.body || {}).reason || '').trim();
+  if (reason.length < 5 || reason.length > 160) return res.status(400).json({ error: 'unlock reason must be 5–160 characters' });
+  if (!isSubmissionLocked(state.teamSubmission)) return res.status(409).json({ error: 'team list is not locked' });
+  const actor = authOf(req).no ?? 'coach';
+  await saveAndReply(res, () => {
+    if (!isSubmissionLocked(state.teamSubmission)) { const e = new Error('team list is not locked'); e.httpStatus = 409; throw e; }
+    const unlockedAt = Math.max(gameNow(), Number(state.teamSubmission.submittedAt) + 1);
+    const audit = { submittedAt: state.teamSubmission.submittedAt, unlockedAt, unlockedBy: actor, reason,
+      priorAssignments: Object.fromEntries(state.players.map(p => [p.no, p.team])) };
+    state.teamSubmission.unlockedAt = unlockedAt; state.teamSubmission.unlockedBy = actor; state.teamSubmission.unlockReason = reason;
+    state.teamSubmissionAudit.push(audit); state.teamSubmissionAudit = state.teamSubmissionAudit.slice(-100);
+    return audit;
+  }, () => ({ ok: true, submission: state.teamSubmission, audit: state.teamSubmissionAudit }));
+});
+
 app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
+  if (isSubmissionLocked(state.teamSubmission)) return res.status(423).json({ error: 'team list is submitted and locked', submittedAt: state.teamSubmission.submittedAt });
   const evaluationVersion = (req.body || {}).evaluationVersion;
   if (evaluationVersion !== undefined && (!Number.isFinite(evaluationVersion) || evaluationVersion !== state.updatedAt)) {
     return res.status(409).json({ error: 'team data changed — refresh the analysis before applying it' });
@@ -739,6 +812,7 @@ app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
     if (err) return res.status(400).json({ error: err });
   }
   await saveAndReply(res, () => {
+    if (isSubmissionLocked(state.teamSubmission)) { const e = new Error('team list is submitted and locked'); e.httpStatus = 423; throw e; }
     if (evaluationVersion !== undefined && evaluationVersion !== state.updatedAt) {
       const e = new Error('team data changed — refresh the analysis before applying it'); e.httpStatus = 409; throw e;
     }
@@ -883,6 +957,8 @@ function validateBackup(b) {
     if (err) return err;
   }
   if (b.settings !== undefined && (typeof b.settings !== 'object' || b.settings === null || Array.isArray(b.settings))) return 'settings must be an object';
+  if (b.teamSubmission !== undefined && b.teamSubmission !== null && !cleanSubmission(b.teamSubmission)) return 'bad teamSubmission';
+  if (b.teamSubmissionAudit !== undefined && (!Array.isArray(b.teamSubmissionAudit) || b.teamSubmissionAudit.some(x => !cleanAudit(x)))) return 'bad teamSubmissionAudit';
   return null;
 }
 function validateImportPlayer(ip) {
