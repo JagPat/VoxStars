@@ -17,7 +17,7 @@ The app is **role-based** behind a single login. Each person signs in as themsel
 
 - **Squad readiness board** — every player's avg, trend, confidence (games logged), target gap and availability, with **Nudge** and **Log-for-them** on anyone short of data.
 - **Session logger** — punch a whole lane's scores off the overhead monitor in one ~30-second pass. Failed saves stay on the form and say so — nothing is silently dropped.
-- **Optimizer** — the living sub-team builder: Powerhouse / Balanced / Tiered, ₹25 Cr cap, fixed Captain/VC leads, pins, and a live "stronger split available → Apply" prompt.
+- **Tournament optimizer** — evaluates every legal ₹25 Cr split, models each player's uncertainty, and compares **Championship Safe**, **Aggressive**, and **Franchise Balanced** scenarios before the captain applies one.
 - **Match Day** — each sub-team's two qualifier games with strike/spare tie-breakers, kept separate from practice.
 
 Data lives on a small server + JSON store on a persistent volume, so everyone sees the same numbers.
@@ -34,6 +34,31 @@ Data lives on a small server + JSON store on a persistent volume, so everyone se
 2. **Sign in** — open your personal **invite link** (sets your PIN) the first time; after that just **name + PIN** on any phone. You land straight on **Me**.
 3. **Play & log:** after each game tap **＋ Log a game** (quick score, or tap the pins frame-by-frame). Your ring and plan update instantly — and only *you* can log *your* games. No signal in the alley? The score queues on your phone and syncs itself later.
 4. **The captain / vice-captains** get the cockpit from their own login (**Profile → Enter coach cockpit**; coach PIN works as a backup). Share each player's link from **Squad → Invite links**.
+
+## Tournament optimizer
+
+Open **Coach cockpit → Optimizer** and tap **Analyze all teams**. The server evaluates every legal partition of the 15-player roster while enforcing 4 men + 1 woman, the 25 Cr cap, unique player assignment, availability, coach pins, and separate Captain/VC leadership.
+
+- **Championship Safe** is the default compromise between a strong title contender and protection for the weakest sub-team.
+- **Aggressive** maximizes the strongest team's conservative later-round score.
+- **Franchise Balanced** maximizes the weakest team's conservative floor.
+
+Each team card shows expected Stage I score, a conservative Stage I floor, the one-game later-round floor, Base Value, forecast confidence, and tie-break data coverage. Tap a player to inspect their forecast range and evidence. Recommendations are advisory: assignments change only after the coach taps **Apply**.
+
+### Score evidence and exclusions
+
+New games explicitly record whether strikes and spares were actually tracked, so missing tie-break data is not treated as zero. The data-quality queue highlights missing/stale practice data, influential scores, incomplete tie-break tracking, and unavailable players. A coach may exclude a suspicious game from optimization; the score remains visible in player history, exports, and backups and can be included again later.
+
+### Submitting and unlocking team lists
+
+After applying and reviewing all three teams, tap **Mark official list submitted**. This locks both the optimizer and direct team edits, enforcing the organizer's no-internal-swaps rule. If the organizer approves a correction, **Organizer-approved unlock** requires a reason and retains the prior assignments, actor, and timestamp in the coach-only audit trail.
+
+### Model limitations
+
+- Forecasts use prior-season evidence plus recency-weighted practice scores and deliberately widen when evidence is limited; they are decision support, not guarantees.
+- Qualification probability is omitted unless a dated, sourced opponent/cutoff benchmark is supplied.
+- The supplied rules PDF conflicts internally: Stage II says 12 teams advance while Stage III describes 16 teams. The optimizer uses the conservative interpretation but does not claim to resolve that organizer inconsistency.
+- Spirit of IncrediBowl scoring is not calculated because the official methodology has not been announced.
 
 ---
 
@@ -149,10 +174,14 @@ Coolify rebuilds and redeploys automatically. Practice data on the `/data` volum
 | POST | `/api/invites/reset` | coach | new single-use invite; clears PIN, revokes all sessions |
 | POST | `/api/games` | player/coach | log a game (idempotent via `clientId`) |
 | POST | `/api/games/:no/:id/verify` | coach | verify/unverify a game (by immutable id) |
+| PUT | `/api/games/:no/:id/optimizer-status` | coach | include/exclude a retained game from forecasts |
 | DELETE | `/api/games/:no/:id` | own player/coach | delete a game (by immutable id) |
 | PUT | `/api/players/:no` | coach | availability / lock / estimate / target |
 | POST | `/api/mytarget` | own player/coach | set a player's target |
-| POST | `/api/teams` | coach | assign sub-teams |
+| POST | `/api/optimizer/evaluate` | coach | evaluate every legal split and return three scenarios |
+| POST | `/api/teams` | coach | assign sub-teams (supports stale-analysis guard) |
+| POST | `/api/teams/submit` | coach | lock the complete official team list |
+| POST | `/api/teams/unlock` | coach | audited organizer-approved unlock |
 | PUT | `/api/settings` | coach | lineup size, cap, strategy |
 | GET | `/api/backup` | coach | download a full snapshot |
 | POST | `/api/restore` | coach | restore a snapshot (strictly validated) |

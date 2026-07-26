@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, api } = require('./helpers');
+const { startServer, api, tmpDataDir } = require('./helpers');
 
 async function withCoach(run) {
   const srv = await startServer(); const req = api(srv.base);
@@ -66,4 +66,29 @@ test('submission and audit survive backup restore while player state hides audit
     assert.equal('teamSubmissionAudit' in playerState, false);
     assert.equal(JSON.stringify(playerState).includes('Organizer approved correction'), false);
   });
+});
+
+test('applied and submitted optimizer decision survives a server restart', async () => {
+  const dataDir = tmpDataDir();
+  const first = await startServer({ dataDir, keepDataDir: true });
+  try {
+    const req = api(first.base);
+    const coachSession = (await req('POST', '/api/coach/verify', { body: { pin: first.coachPin } })).body.session;
+    const version = await applyLegalSplit(req, coachSession);
+    assert.equal((await req('POST', '/api/teams/submit', { body: { assignmentVersion: version }, coachSession })).status, 200);
+  } finally { await first.stop(); }
+
+  const second = await startServer({ dataDir });
+  try {
+    const req = api(second.base);
+    const coachSession = (await req('POST', '/api/coach/verify', { body: { pin: second.coachPin } })).body.session;
+    const state = (await req('GET', '/api/state', { coachSession })).body;
+    assert.equal(state.teamSubmission.locked, true);
+    assert.equal(state.players.filter(p => p.team).length, 15);
+    const unlocked = await req('POST', '/api/teams/unlock', {
+      body: { reason: 'Organizer approved after restart' }, coachSession
+    });
+    assert.equal(unlocked.status, 200);
+    assert.match(unlocked.body.audit.at(-1).reason, /Organizer approved/);
+  } finally { await second.stop(); }
 });
