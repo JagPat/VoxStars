@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { teamSplitError } = require('./public/app-core');
+const { ROSTER, LEADS: TEAM_LEADS } = require('./public/roster');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 const IS_TEST = process.env.NODE_ENV === 'test';
@@ -64,16 +65,9 @@ app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const ROSTER_NOS = [149, 171, 175, 99, 31, 22, 114, 38, 137, 8, 128, 41, 49, 43, 82];
+const ROSTER_NOS = ROSTER.map(p => p.no);
 const COACH_NOS  = [149, 171, 175]; // Captain (149) + Vice-Captains (171, 175) — full access by identity
-const ROSTER_INFO = [
-  { no: 149, g: 'M', pt: 2 }, { no: 171, g: 'M', pt: 1 }, { no: 175, g: 'M', pt: 1 },
-  { no: 99, g: 'M', pt: 4 }, { no: 31, g: 'F', pt: 7 }, { no: 22, g: 'F', pt: 10 },
-  { no: 114, g: 'M', pt: 6 }, { no: 38, g: 'M', pt: 10 }, { no: 137, g: 'M', pt: 3 },
-  { no: 8, g: 'F', pt: 2 }, { no: 128, g: 'M', pt: 4 }, { no: 41, g: 'M', pt: 4 },
-  { no: 49, g: 'M', pt: 2 }, { no: 43, g: 'M', pt: 2 }, { no: 82, g: 'M', pt: 2 },
-];
-const TEAM_LEADS = { A: 149, B: 171, C: 175 };
+const ROSTER_INFO = ROSTER.map(({ no, g, pt }) => ({ no, g, pt }));
 
 /* ---------------- crypto helpers ---------------- */
 const sha256hex = s => crypto.createHash('sha256').update(String(s)).digest('hex');

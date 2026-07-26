@@ -41,6 +41,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="roster.js"></script>
 <script src="app-core.js"></script>
 <script>
 /* shared core: escaping, ten-pin math, durable offline outbox (see app-core.js) */
@@ -50,24 +51,7 @@ const {
   localDate,offlineSessionIdentity,teamSplitError,fetchWithTimeout
 }=window.VoxCore;
 /* ============ REAL ROSTER (VOX STARS, IncrediBowl S2) ============ */
-const ROSTER=[
- {no:149,name:"AR. Jagrut Patel",firm:"Vitan Architects",g:"M",pt:2,lgAvg:89,lgHigh:93,lgM:2,lgStr:null,role:"C"},
- {no:171,name:"Mr. Sandeep Sisodiya",firm:"Vox India",g:"M",pt:1,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"VC"},
- {no:175,name:"Mr. Siddharth Bhatt",firm:"Vox India",g:"M",pt:1,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"VC"},
- {no:99,name:"ID. Nayan Mistry",firm:"Hridgata Atelier",g:"M",pt:4,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"P"},
- {no:31,name:"ID. Shivangi Paradava",firm:"PDC Architects",g:"F",pt:7,lgAvg:115,lgHigh:158,lgM:3,lgStr:3,role:"P"},
- {no:22,name:"ID. Pranati Shah",firm:"PV Design Studio",g:"F",pt:10,lgAvg:121,lgHigh:152,lgM:4,lgStr:6,role:"P"},
- {no:114,name:"ER. Pratik Vasant",firm:"P.INE Studio",g:"M",pt:6,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"P"},
- {no:38,name:"AR. Akhil Gajjar",firm:"Verizon Architects",g:"M",pt:10,lgAvg:140,lgHigh:150,lgM:3,lgStr:10,role:"P"},
- {no:137,name:"Suraj Gajera",firm:"SV Design Interior",g:"M",pt:3,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"P"},
- {no:8,name:"AR. Sachi Prajapati",firm:"Verizon Architects",g:"F",pt:2,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"P"},
- {no:128,name:"AR. Saumil Patel",firm:"Squelette Design",g:"M",pt:4,lgAvg:165,lgHigh:177,lgM:2,lgStr:7,role:"P"},
- {no:41,name:"AR. Ankur Sanghvi",firm:"Tranquil Design Wave",g:"M",pt:4,lgAvg:133,lgHigh:145,lgM:3,lgStr:3,role:"P"},
- {no:49,name:"AR. Bhavik Nandi",firm:"Associated Architects",g:"M",pt:2,lgAvg:126,lgHigh:151,lgM:3,lgStr:5,role:"P"},
- {no:43,name:"AR. Arpan Patel",firm:"Briqmort",g:"M",pt:2,lgAvg:125,lgHigh:142,lgM:4,lgStr:6,role:"P"},
- {no:82,name:"AR. Karnav Patel",firm:"Satatya Architects",g:"M",pt:2,lgAvg:null,lgHigh:null,lgM:0,lgStr:null,role:"P"}
-];
-const LEADS={A:149,B:171,C:175};
+const {ROSTER,LEADS}=window.VoxRoster;
 const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Verantes Elites":[145,144,139,126,115,100,94,64,59],"Bharat Blazers":[172,132,120,120,116,93,84],"Durlax Warriors":[150,134,127,120,118,105,102,95],"TWF Tornados":[139,129,124,124,123,120,115,102,92,75],"Koil Krushers":[138,131,124,120,118,115,115,104,75],"Eff.co Wreckers":[130,128,127,122,120,106,90],"Fima Strikers":[140,138,133,126,90,86],"CXO Superboss":[132,131,126,125,111,85,73],"All About Living":[142,127,122,113,112,110],"Dynamic Hunters":[126,126,117,115,113,110,90]};
 const DEFSET={defaultAvg:100,capCr:25,splitStrategy:"powerhouse",powerTeam:"A"};
 const CK="vox_v3_cache",UK="vox_v3_ui",SK="vox_v3_session",CSK="vox_v3_coach_session",OBK="vox_v3_outbox",SBK="vox_v3_session_binding";
