@@ -1,8 +1,8 @@
 /* Keep only the static app shell available offline. API responses and player
    data are deliberately never stored here; live/cached team state remains in
    the app's existing authenticated API + localStorage flow. */
-const SHELL_CACHE = 'voxstars-shell-v1';
-const SHELL_FILES = ['/index.html', '/app-core.js'];
+const SHELL_CACHE = 'voxstars-shell-v2';
+const SHELL_FILES = ['/index.html', '/app-core.js', '/competitor-core.js'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -45,7 +45,7 @@ self.addEventListener('fetch', event => {
 
   if (request.mode === 'navigate') {
     event.respondWith(shellFromNetwork(request, '/index.html'));
-  } else if (url.pathname === '/app-core.js') {
-    event.respondWith(shellFromNetwork(request, '/app-core.js'));
+  } else if (SHELL_FILES.includes(url.pathname)) {
+    event.respondWith(shellFromNetwork(request, url.pathname));
   }
 });

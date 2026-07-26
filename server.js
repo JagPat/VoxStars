@@ -166,6 +166,7 @@ function defaultState() {
   return { players: ROSTER_NOS.map(blankPlayer),
     settings: { defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A' },
     sessions: {}, matchday: { A: {}, B: {}, C: {} }, teamSubmission: null, teamSubmissionAudit: [],
+    competitorObservations: [],
     installId: newToken(), updatedAt: Date.now() };
 }
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -197,6 +198,21 @@ function cleanAudit(value) {
   return { submittedAt: value.submittedAt, unlockedAt: value.unlockedAt,
     unlockedBy: value.unlockedBy ?? 'coach', reason: value.reason,
     priorAssignments: Object.fromEntries(Object.entries(value.priorAssignments).map(([no, team]) => [Number(no), team])) };
+}
+function cleanCompetitorObservation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const franchise = typeof value.franchise === 'string' ? value.franchise.trim() : '';
+  const source = typeof value.source === 'string' ? value.source.trim() : '';
+  const team = value.team == null || value.team === '' ? null : value.team;
+  const max = value.stage === 'stageOne' ? 3000 : 1500;
+  if (!/^c-[A-Za-z0-9-]{8,64}$/.test(String(value.id || '')) || franchise.length < 2 || franchise.length > 80 ||
+      ![null, 'A', 'B', 'C'].includes(team) || !['stageOne', 'later'].includes(value.stage) ||
+      !Number.isInteger(value.score) || value.score < 0 || value.score > max ||
+      source.length < 2 || source.length > 120 || !validDate(value.observedAt) ||
+      !Number.isFinite(value.createdAt)) return null;
+  return { id: String(value.id), franchise, team, stage: value.stage, score: value.score,
+    source, observedAt: value.observedAt, createdAt: value.createdAt,
+    confidence: team ? 'confirmed' : 'provisional' };
 }
 const isSubmissionLocked = submission => !!(submission && submission.submittedAt &&
   !(Number(submission.unlockedAt) > Number(submission.submittedAt)));
@@ -269,12 +285,15 @@ function normalize(s) {
   if (s.teamSubmission !== undefined && s.teamSubmission !== null && !teamSubmission) changed = true;
   const teamSubmissionAudit = Array.isArray(s.teamSubmissionAudit) ? s.teamSubmissionAudit.map(cleanAudit).filter(Boolean).slice(-100) : [];
   if (!Array.isArray(s.teamSubmissionAudit) || teamSubmissionAudit.length !== s.teamSubmissionAudit.length) changed = true;
+  const competitorObservations = Array.isArray(s.competitorObservations)
+    ? s.competitorObservations.map(cleanCompetitorObservation).filter(Boolean).slice(-200) : [];
+  if (!Array.isArray(s.competitorObservations) || competitorObservations.length !== s.competitorObservations.length) changed = true;
   return {
     changed,
     state: {
       players,
       settings: Object.assign({ defaultAvg: 100, capCr: 25, splitStrategy: 'powerhouse', powerTeam: 'A' }, (s.settings && typeof s.settings === 'object') ? s.settings : {}),
-      sessions, matchday, teamSubmission, teamSubmissionAudit,
+      sessions, matchday, teamSubmission, teamSubmissionAudit, competitorObservations,
       installId: (typeof s.installId === 'string' && s.installId) ? s.installId : newToken(),
       updatedAt: Number(s.updatedAt) || Date.now(),
     },
@@ -583,7 +602,8 @@ app.get('/api/state', (req, res) => {
   });
   const submission = state.teamSubmission && { submittedAt: state.teamSubmission.submittedAt,
     assignmentVersion: state.teamSubmission.assignmentVersion, locked: isSubmissionLocked(state.teamSubmission) };
-  const coachOnly = auth.isCoach ? { teamSubmissionAudit: state.teamSubmissionAudit } : {};
+  const coachOnly = auth.isCoach ? { teamSubmissionAudit: state.teamSubmissionAudit,
+    competitorObservations: state.competitorObservations } : {};
   res.json({ players: safePlayers, settings: state.settings, matchday: state.matchday,
     teamSubmission: submission, ...coachOnly, updatedAt: state.updatedAt, installId: state.installId });
 });
@@ -591,7 +611,8 @@ app.get('/api/state', (req, res) => {
 // Coach: download a full backup snapshot (players + games + settings)
 app.get('/api/backup', (req, res) => { if (!gateCoach(req, res)) return;
   res.json({ voxstars: 1, exportedAt: Date.now(), players: state.players, settings: state.settings,
-    matchday: state.matchday, teamSubmission: state.teamSubmission, teamSubmissionAudit: state.teamSubmissionAudit }); });
+    matchday: state.matchday, teamSubmission: state.teamSubmission, teamSubmissionAudit: state.teamSubmissionAudit,
+    competitorObservations: state.competitorObservations }); });
 // Coach: restore from a backup snapshot (brings back games, PINs, teams, targets)
 app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
   const b = req.body || {};
@@ -613,8 +634,38 @@ app.post('/api/restore', async (req, res) => { if (!gateCoach(req, res)) return;
     if (b.matchday) state.matchday = cleanMatchday(b.matchday);
     state.teamSubmission = b.teamSubmission ? cleanSubmission(b.teamSubmission) : null;
     state.teamSubmissionAudit = Array.isArray(b.teamSubmissionAudit) ? b.teamSubmissionAudit.map(cleanAudit).filter(Boolean).slice(-100) : [];
+    state.competitorObservations = Array.isArray(b.competitorObservations)
+      ? b.competitorObservations.map(cleanCompetitorObservation).filter(Boolean).slice(-200) : [];
     revokeAllPlayerBoundSessions(); // restored PINs/identities replace live ones
   }, { ok: true, restored: b.players.length });
+});
+
+// Coach-only observed field scores. These are evidence, not invented opponent forecasts.
+app.get('/api/competitors', (req, res) => { if (!gateCoach(req, res)) return;
+  res.json({ observations: state.competitorObservations });
+});
+app.post('/api/competitors', async (req, res) => { if (!gateCoach(req, res)) return;
+  const b = req.body || {};
+  const candidate = cleanCompetitorObservation({
+    id: 'c-' + crypto.randomUUID(), franchise: b.franchise, team: b.team,
+    stage: b.stage, score: b.score, source: b.source, observedAt: b.observedAt,
+    createdAt: gameNow(),
+  });
+  if (!candidate) return res.status(400).json({ error: 'competitor result requires franchise, optional team A/B/C, stage, valid score, source, and observedAt date' });
+  await saveAndReply(res, () => {
+    state.competitorObservations.push(candidate);
+    state.competitorObservations = state.competitorObservations.slice(-200);
+    return candidate;
+  }, observation => ({ ok: true, observation }));
+});
+app.delete('/api/competitors/:id', async (req, res) => { if (!gateCoach(req, res)) return;
+  const id = String(req.params.id || '');
+  if (!/^c-[A-Za-z0-9-]{8,64}$/.test(id)) return res.status(400).json({ error: 'bad observation id' });
+  await saveAndReply(res, () => {
+    const before = state.competitorObservations.length;
+    state.competitorObservations = state.competitorObservations.filter(x => x.id !== id);
+    return before - state.competitorObservations.length;
+  }, removed => ({ ok: true, removed }));
 });
 
 // Log a game — must be signed in; a player may only log their OWN games; coach may log for anyone.
@@ -962,6 +1013,10 @@ function validateBackup(b) {
   if (b.settings !== undefined && (typeof b.settings !== 'object' || b.settings === null || Array.isArray(b.settings))) return 'settings must be an object';
   if (b.teamSubmission !== undefined && b.teamSubmission !== null && !cleanSubmission(b.teamSubmission)) return 'bad teamSubmission';
   if (b.teamSubmissionAudit !== undefined && (!Array.isArray(b.teamSubmissionAudit) || b.teamSubmissionAudit.some(x => !cleanAudit(x)))) return 'bad teamSubmissionAudit';
+  if (b.competitorObservations !== undefined && (!Array.isArray(b.competitorObservations) ||
+      b.competitorObservations.length > 200 || b.competitorObservations.some(x => !cleanCompetitorObservation(x)))) {
+    return 'bad competitorObservations';
+  }
   return null;
 }
 function validateImportPlayer(ip) {

@@ -45,6 +45,12 @@ Open **Coach cockpit → Optimizer** and tap **Analyze all teams**. The server e
 
 Each team card shows expected Stage I score, a conservative Stage I floor, the one-game later-round floor, Base Value, forecast confidence, and tie-break data coverage. Tap a player to inspect their forecast range and evidence. Recommendations are advisory: assignments change only after the coach taps **Apply**.
 
+### Competitors and benchmarks
+
+The coach-only **Competitors & benchmarks** panel accepts an observed competitor franchise/team score, tournament stage, source, and date. Stage I uses 10-game totals; later rounds use 5-game totals. Each VOX team is shown against that field using its P20, expected, and P80 forecast plus an observed rank range.
+
+This is a score comparison, not a win probability. Named A/B/C observations are labelled `confirmed`; franchise-only observations are `provisional`. These records are excluded from ordinary player API state and included in coach backups.
+
 ### Score evidence and exclusions
 
 New games explicitly record whether strikes and spares were actually tracked, so missing tie-break data is not treated as zero. The data-quality queue highlights missing/stale practice data, influential scores, incomplete tie-break tracking, and unavailable players. A coach may exclude a suspicious game from optimization; the score remains visible in player history, exports, and backups and can be included again later.

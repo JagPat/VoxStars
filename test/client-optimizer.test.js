@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { scenarioViewModel, forecastWarningLabel, submissionLocked } = require('../public/app-core');
 
 test('scenario view model keeps recommendation and alternatives distinct', () => {
@@ -22,4 +24,14 @@ test('submission is locked only before an audited unlock', () => {
 test('forecast warning label does not invent certainty', () => {
   assert.match(forecastWarningLabel({ warnings: ['No personal score evidence.'], confidenceLabel: 'Low' }), /No personal/);
   assert.match(forecastWarningLabel({ warnings: [], confidenceLabel: 'Developing' }), /Developing/);
+});
+
+test('coach optimizer exposes sourced competitor comparison controls', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  for (const phrase of ['Competitors & benchmarks', 'Observed rank range', 'Source / scoreboard',
+    'confirmed', 'provisional', 'These are score comparisons, not win probabilities']) {
+    assert.match(html, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(html, /\/api\/competitors/);
+  assert.match(html, /compareTeamToField/);
 });
