@@ -113,6 +113,18 @@
     }
     return null;
   }
+  function scenarioViewModel(result, selectedKey) {
+    const cards = result ? [result.recommended, ...(result.alternatives || [])].filter(Boolean) : [];
+    const selected = cards.find(x => x.mode === selectedKey || x.key === selectedKey) || cards[0] || null;
+    return { cards, selected, recommended: result && result.recommended || null };
+  }
+  function forecastWarningLabel(forecast) {
+    if (forecast && Array.isArray(forecast.warnings) && forecast.warnings.length) return forecast.warnings[0];
+    return `${forecast && forecast.confidenceLabel || 'Low'} confidence forecast`;
+  }
+  function submissionLocked(submission) {
+    return !!(submission && submission.submittedAt && !(Number(submission.unlockedAt) > Number(submission.submittedAt)));
+  }
   async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
     const controller = new AbortController();
     const timeout = Math.max(1, Number(timeoutMs) || 10000);
@@ -176,6 +188,7 @@
   return {
     esc, idAttr, frameState, frameComplete, rollTxt, createOutbox, uuid,
     createScoreEntry, updateScoreEntry, beginScoreSubmission, endScoreSubmission,
-    localDate, offlineSessionIdentity, teamSplitError, fetchWithTimeout,
+    localDate, offlineSessionIdentity, teamSplitError, scenarioViewModel,
+    forecastWarningLabel, submissionLocked, fetchWithTimeout,
   };
 });
