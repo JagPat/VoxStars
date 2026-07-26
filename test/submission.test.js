@@ -56,8 +56,13 @@ test('submission and audit survive backup restore while player state hides audit
     await req('POST', '/api/teams/unlock', { body: { reason: 'Organizer approved correction' }, coachSession });
     const backup = (await req('GET', '/api/backup', { coachSession })).body;
     assert.equal(backup.teamSubmissionAudit.length, 1);
+    const game = (await req('POST', '/api/games', { body: { no: 99, score: 10 }, coachSession })).body.game;
+    await req('PUT', `/api/games/99/${game.id}/optimizer-status`, {
+      body: { included: false, reason: 'private coach review note' }, coachSession
+    });
+    const backupWithEvidence = (await req('GET', '/api/backup', { coachSession })).body;
     await req('POST', '/api/reset', { coachSession });
-    assert.equal((await req('POST', '/api/restore', { body: backup, coachSession })).status, 200);
+    assert.equal((await req('POST', '/api/restore', { body: backupWithEvidence, coachSession })).status, 200);
     const coachState = (await req('GET', '/api/state', { coachSession })).body;
     assert.equal(coachState.teamSubmissionAudit[0].reason, 'Organizer approved correction');
     const invite = (await req('GET', '/api/invites', { coachSession })).body.players.find(p => p.no === 99).token;
@@ -65,6 +70,8 @@ test('submission and audit survive backup restore while player state hides audit
     const playerState = (await req('GET', '/api/state', { session: playerSession })).body;
     assert.equal('teamSubmissionAudit' in playerState, false);
     assert.equal(JSON.stringify(playerState).includes('Organizer approved correction'), false);
+    assert.equal(JSON.stringify(playerState).includes('private coach review note'), false);
+    assert.equal('optimizerIncluded' in playerState.players.find(p => p.no === 99).games[0], false);
   });
 });
 

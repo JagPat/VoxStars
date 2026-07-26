@@ -577,7 +577,10 @@ app.get('/api/state', (req, res) => {
   // whole squad; the public / logged-out cannot read scores. Secrets stripped.
   const auth = authOf(req);
   if (!auth) return res.status(401).json({ error: 'sign in to view team data' });
-  const safePlayers = state.players.map(({ authPin, inviteToken, ...rest }) => rest);
+  const safePlayers = state.players.map(({ authPin, inviteToken, ...rest }) => {
+    if (auth.isCoach) return rest;
+    return { ...rest, games: rest.games.map(({ optimizerIncluded, optimizerExclusionReason, ...game }) => game) };
+  });
   const submission = state.teamSubmission && { submittedAt: state.teamSubmission.submittedAt,
     assignmentVersion: state.teamSubmission.assignmentVersion, locked: isSubmissionLocked(state.teamSubmission) };
   const coachOnly = auth.isCoach ? { teamSubmissionAudit: state.teamSubmissionAudit } : {};
