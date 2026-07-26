@@ -16,6 +16,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { teamSplitError } = require('./public/app-core');
 const { ROSTER, LEADS: TEAM_LEADS } = require('./public/roster');
+const { OPTIMIZER_VERSION, evaluateRoster } = require('./lib/optimizer');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 const IS_TEST = process.env.NODE_ENV === 'test';
@@ -325,7 +326,7 @@ function commit(apply) {
   const run = commitChain.then(async () => {
     if (degraded) { const e = new Error('server is in protected (degraded) mode'); e.degraded = true; throw e; }
     const result = apply();
-    state.updatedAt = Date.now();
+    state.updatedAt = Math.max(Date.now(), Number(state.updatedAt || 0) + 1);
     const snapshot = JSON.stringify(state);
     try { await enqueueWrite(snapshot); }
     catch (e) { revertToDisk(); const err = new Error('persist failed: ' + e.message); err.persistFailed = true; throw err; }
@@ -679,7 +680,58 @@ app.post('/api/mytarget', async (req, res) => {
   }, () => ({ ok: true, target: out }));
 });
 
+app.post('/api/optimizer/evaluate', (req, res) => {
+  if (!gateCoach(req, res)) return;
+  const b = req.body || {};
+  const allowedModes = ['championship-safe', 'aggressive', 'franchise-balanced'];
+  const scenarioMode = b.scenarioMode || 'championship-safe';
+  if (!allowedModes.includes(scenarioMode)) return res.status(400).json({ error: 'unknown scenario mode' });
+  const validMap = (value, allowed) => value === undefined || (value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.entries(value).every(([no, v]) => ROSTER_NOS.includes(Number(no)) && allowed(v)));
+  if (!validMap(b.pins, v => ['A', 'B', 'C'].includes(v))) return res.status(400).json({ error: 'pins must map roster numbers to A, B, or C' });
+  if (!validMap(b.availability, v => typeof v === 'boolean')) return res.status(400).json({ error: 'availability must map roster numbers to booleans' });
+  let benchmark = null;
+  if (b.benchmark !== undefined) {
+    const x = b.benchmark;
+    if (!x || typeof x !== 'object' || !['stageOne', 'later'].includes(x.stage) ||
+        !Number.isFinite(x.cutoff) || x.cutoff < 0 || x.cutoff > (x.stage === 'stageOne' ? 3000 : 1500) ||
+        typeof x.source !== 'string' || !x.source.trim() || x.source.length > 120 || !validDate(x.observedAt)) {
+      return res.status(400).json({ error: 'benchmark requires stage, valid cutoff, source, and observedAt date' });
+    }
+    benchmark = { stage: x.stage, cutoff: x.cutoff, source: x.source.trim(), observedAt: x.observedAt };
+  }
+  const snapshotUpdatedAt = state.updatedAt;
+  const evaluationInstant = new Date(snapshotUpdatedAt).toISOString();
+  const evaluationDate = evaluationInstant.slice(0, 10);
+  const persistedPins = Object.fromEntries(state.players.filter(p => p.pin && p.team).map(p => [p.no, p.team]));
+  const persistedAvailability = Object.fromEntries(state.players.map(p => [p.no, p.available !== false]));
+  const pins = { ...persistedPins, ...(b.pins || {}) };
+  const availability = { ...persistedAvailability, ...(b.availability || {}) };
+  const seed = `${OPTIMIZER_VERSION}:${snapshotUpdatedAt}:${JSON.stringify({ pins, availability, benchmark })}`;
+  const result = evaluateRoster({ roster: ROSTER, players: state.players, capCr: state.settings.capCr,
+    leads: TEAM_LEADS, pins, availability, evaluationDate, seed, benchmark });
+  if (result.conflict) return res.status(422).json({ error: result.conflict });
+  const picked = result.scenarios;
+  const byMode = { 'championship-safe': picked.championshipSafe, aggressive: picked.aggressive,
+    'franchise-balanced': picked.franchiseBalanced };
+  const labels = { 'championship-safe': 'Championship Safe', aggressive: 'Aggressive',
+    'franchise-balanced': 'Franchise Balanced' };
+  const labelled = (scenario, mode) => ({ ...scenario, mode, label: labels[mode] });
+  res.json({
+    modelVersion: result.modelVersion, evaluationVersion: snapshotUpdatedAt, evaluatedAt: evaluationInstant,
+    legalPartitionCount: result.legalPartitionCount,
+    dataQuality: result.forecasts.flatMap(f => f.warnings.map(message => ({ no: f.no, message }))),
+    forecasts: result.forecasts, recommended: labelled(byMode[scenarioMode], scenarioMode),
+    alternatives: Object.entries(byMode).filter(([mode]) => mode !== scenarioMode).map(([mode, scenario]) => labelled(scenario, mode)),
+    unresolvedRules: ['Stage II says 12 advance while Stage III says 16 teams'],
+  });
+});
+
 app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
+  const evaluationVersion = (req.body || {}).evaluationVersion;
+  if (evaluationVersion !== undefined && (!Number.isFinite(evaluationVersion) || evaluationVersion !== state.updatedAt)) {
+    return res.status(409).json({ error: 'team data changed — refresh the analysis before applying it' });
+  }
   const a = (req.body && req.body.assignments) || {};
   const next = Object.fromEntries(state.players.map(p => [p.no, Object.prototype.hasOwnProperty.call(a, p.no) ? a[p.no] : p.team]));
   if (Object.values(next).every(team => ['A', 'B', 'C'].includes(team))) {
@@ -687,11 +739,14 @@ app.post('/api/teams', async (req, res) => { if (!gateCoach(req, res)) return;
     if (err) return res.status(400).json({ error: err });
   }
   await saveAndReply(res, () => {
+    if (evaluationVersion !== undefined && evaluationVersion !== state.updatedAt) {
+      const e = new Error('team data changed — refresh the analysis before applying it'); e.httpStatus = 409; throw e;
+    }
     Object.keys(a).forEach(no => { const p = P(no); if (p) {
       p.team = ['A', 'B', 'C'].includes(a[no]) ? a[no] : null;
       clearStaleMatchdayEntries(p.no, p.team);
     } });
-  }, { ok: true }); });
+  }, () => ({ ok: true, assignmentVersion: state.updatedAt })); });
 function applySettings(b) {
   ['defaultAvg', 'capCr'].forEach(k => {
     if (b[k] !== undefined && b[k] !== null && b[k] !== '' && Number.isFinite(Number(b[k]))) state.settings[k] = Number(b[k]);

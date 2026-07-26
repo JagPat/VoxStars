@@ -43,3 +43,47 @@ test('only a coach can exclude a game and the score remains stored', async () =>
     assert.equal(stored.optimizerExclusionReason, 'possible entry error');
   });
 });
+
+test('optimizer evaluation is coach-only, deterministic, and strips private state', async () => {
+  await withCoach(async ({ req, coachSession }) => {
+    assert.equal((await req('POST', '/api/optimizer/evaluate', { body: {} })).status, 401);
+    const one = await req('POST', '/api/optimizer/evaluate', { body: {}, coachSession });
+    const two = await req('POST', '/api/optimizer/evaluate', { body: {}, coachSession });
+    assert.equal(one.status, 200);
+    assert.deepEqual(one.body, two.body);
+    assert.equal(one.body.recommended.label, 'Championship Safe');
+    assert.equal(one.body.alternatives.length, 2);
+    assert.equal(one.body.forecasts.length, 15);
+    const text = JSON.stringify(one.body);
+    for (const secret of ['authPin', 'inviteToken', 'sessions']) assert.ok(!text.includes(secret));
+    assert.equal('qualificationProbability' in one.body.recommended.teams.A.stageOne, false);
+  });
+});
+
+test('optimizer rejects impossible constraints and accepts sourced benchmarks', async () => {
+  await withCoach(async ({ req, coachSession }) => {
+    const impossible = await req('POST', '/api/optimizer/evaluate', {
+      body: { pins: { 149: 'B' } }, coachSession
+    });
+    assert.equal(impossible.status, 422);
+    assert.match(impossible.body.error, /Captain 149/);
+    const benchmark = await req('POST', '/api/optimizer/evaluate', {
+      body: { benchmark: { stage: 'stageOne', cutoff: 1000,
+        source: 'Organizer results', observedAt: '2026-07-20' } }, coachSession
+    });
+    assert.equal(benchmark.status, 200);
+    assert.ok('qualificationProbability' in benchmark.body.recommended.teams.A.stageOne);
+  });
+});
+
+test('an optimizer assignment cannot apply after state changes', async () => {
+  await withCoach(async ({ req, coachSession }) => {
+    const result = (await req('POST', '/api/optimizer/evaluate', { body: {}, coachSession })).body;
+    await req('POST', '/api/games', { body: { no: 99, score: 120 }, coachSession });
+    const apply = await req('POST', '/api/teams', {
+      body: { assignments: result.recommended.assignments,
+        evaluationVersion: result.evaluationVersion }, coachSession
+    });
+    assert.equal(apply.status, 409);
+  });
+});
