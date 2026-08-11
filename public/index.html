@@ -171,7 +171,7 @@ function teamsForDisplay(){const c=currentTeams();if(c.A.length+c.B.length+c.C.l
    values are each player's per-game contribution with the same fallback teamStrikes/
    teamSpares use, so team totals here match those helpers. */
 function stPlayers(){return players.map(p=>{const sr=srate(p),spr=sprate(p),d=disp(p),ss=seasonStats(p);
-  return{no:p.no,name:p.name,g:p.g,team:p.team,avg:d.avg,delta:ss.delta,
+  return{no:p.no,name:p.name,g:p.g,team:p.team,avg:d.avg,proj:teamAvg(p),delta:ss.delta,
     strikes:sr!=null?sr:((p.lgStr&&p.lgM)?p.lgStr/p.lgM:0),spares:spr!=null?spr:0};});}
 /* optimizer tieBreakCoverage per team — reused only when the loaded scenario's
    assignment matches the teams currently on screen, so the number always
@@ -399,10 +399,49 @@ function teamViewHTML(){const me=P(ui.me);if(!me.team){return `<div style="paddi
         <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px;text-align:center"><div class="num" style="font-size:15px;font-weight:700;color:${base<=25?'#7bd88f':'#ff9a8a'}">${base<=25?'✓':base+'Cr'}</div><div style="font-size:9px;opacity:.6">≤ 25 Cr cap</div></div>
         <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px;text-align:center"><div class="num" style="font-size:15px;font-weight:700">${rank}</div><div style="font-size:9px;opacity:.6">of 3 sub-teams</div></div></div></div>
     <div class="lbl" style="margin:18px 4px 8px">Your five</div>${rows}</div>`}
+/* stable block order by the friendly Team 1/2/3 numbering (B, A, C) */
+function teamBlockOrder(){return ['A','B','C'].slice().sort((x,y)=>(parseInt(TEAM_LABELS[x].replace(/\D/g,''),10)||9)-(parseInt(TEAM_LABELS[y].replace(/\D/g,''),10)||9));}
+/* job 3 — team-vs-team summary, ordered by the official tie-breakers */
+function teamCompareCardHTML(){const sp=stPlayers(),cov=stCoverage(),ranked=stCompareTeams(sp,{coverage:cov});
+  if(ranked.length<3)return '';
+  const myTeam=(P(ui.me)||{}).team;
+  const cell=(v,lbl,strong)=>`<div style="flex:1;text-align:center"><div class="num" style="font-size:${strong?'17':'13'}px;font-weight:${strong?'800':'700'};color:var(--navy)">${v}</div><div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">${lbl}</div></div>`;
+  const rows=ranked.map(r=>{const s=r.standing,mine=myTeam===s.team;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:12px;background:${mine?'#fdf6e3':'transparent'};border-top:1px solid var(--line)">
+      <div style="flex:0 0 auto;text-align:center;width:20px"><div class="num" style="font-size:13px;font-weight:800;color:${r.position===1?'#8a5a00':'var(--muted)'}">${r.position}</div></div>
+      <div style="flex:0 0 auto;min-width:70px"><div style="font-size:12.5px;font-weight:800;color:var(--navy)">${teamLabel(s.team)}</div><div style="font-size:9px;color:var(--muted)">Sub-team ${s.team}${mine?' · yours':''}</div></div>
+      ${cell(s.series,'series',true)}${cell(s.avg==null?'—':s.avg,'avg')}${cell(s.strikes.toFixed(1),'✕ /gm')}${cell(s.spares.toFixed(1),'/ /gm')}
+    </div>`}).join('');
+  const anyCov=ranked.some(r=>r.standing.coverage!=null);
+  const covLine=anyCov
+    ? 'Tie-break data coverage: '+ranked.map(r=>teamLabel(r.standing.team)+' '+Math.round((r.standing.coverage||0)*100)+'%').join(' · ')+'. Strike & spare projections lean on the players who record them.'
+    : 'Strikes & spares are per-game projections — only some players record them, so team totals are partly extrapolated.';
+  return `<div class="card" style="padding:16px 14px 12px;margin-bottom:14px">
+    <div style="font-size:14px;font-weight:800;color:var(--navy)">Team vs team</div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.45;margin-top:2px">Ranked by projected series, then the official tie-breakers: strikes → spares → female score.</div>
+    <div style="margin-top:8px">${rows}</div>
+    <div style="font-size:9.5px;color:#968e7b;line-height:1.45;margin-top:10px">${esc(covLine)}</div></div>`}
+/* job 2 — leaderboard grouped into per-sub-team blocks, ranked within each */
+function groupedLbHTML(){const c=currentTeams();if(c.A.length+c.B.length+c.C.length<15)return squadLbHTML();
+  const sort=S.lbSort||'imp',sp=stPlayers(),g=stGroupByTeam(sp),st=stTeamStandings(sp);
+  const toggle=`<div style="display:flex;align-items:center;gap:8px;margin:0 4px 8px"><div class="lbl">Who's rising</div><div style="display:flex;gap:6px;margin-left:auto">${['imp','avg'].map(k=>`<button onclick="setLbSort('${k}')" class="chip ${sort===k?'on':''}">${k==='imp'?'Most improved':'By average'}</button>`).join('')}</div></div>`;
+  const blocks=teamBlockOrder().map(k=>{const list=stSortForBoard(g[k],sort),s=st[k];
+    const rows=list.map((p,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-radius:11px;background:${p.no===ui.me?'#fdf6e3':'transparent'}">
+      <div class="num" style="width:16px;text-align:center;font-size:12.5px;font-weight:800;color:${i===0?'#8a5a00':'var(--muted)'};flex:0 0 auto">${i+1}</div>
+      <div class="num" style="position:relative;overflow:hidden;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;color:#fff;flex:0 0 auto;background:${avatarBg(p.g)}">${initials(p.name)}${avPhoto(p.no)}</div>
+      <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.no===ui.me?' <span style="font-size:8.5px;font-weight:800;background:var(--gold);color:var(--navy);padding:1px 5px;border-radius:5px">YOU</span>':''}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div></div>
+      <div style="text-align:right;flex:0 0 auto"><div class="num" style="font-size:16px;font-weight:700;color:var(--navy)">${p.avg==null?'—':p.avg}</div><div style="font-size:9px;font-weight:700">${p.delta!=null?deltaTag(p.delta):'<span style="color:var(--muted)">new bowler</span>'}</div></div></div>`).join('');
+    return `<div style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:14px 14px 0 0;padding:11px 14px;color:#fff">
+        <div class="num" style="width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.12);color:var(--gold2);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:0 0 auto">${k}</div>
+        <div style="flex:1"><div style="font-size:13px;font-weight:800">${teamLabel(k)}</div><div style="font-size:9.5px;opacity:.6">${esc(leadName(k))}'s Five</div></div>
+        <div style="text-align:right"><div class="num" style="font-size:19px;font-weight:800;color:var(--gold2);line-height:1">${s.series}</div><div style="font-size:8.5px;opacity:.6">series · avg ${s.avg==null?'—':s.avg}</div></div></div>
+      <div class="card" style="padding:5px 12px;border-radius:0 0 14px 14px">${rows}</div></div>`}).join('');
+  return `${toggle}${blocks}`;}
 function competeViewHTML(){const rows=ladderRows();
   const lb=strikeLeaderboard();const meRankTxt=lb.myRank?("You're <span style=\"color:#8a5a00;font-weight:700\">"+ordinal(lb.myRank)+"</span> for strikes this week 🎳"):'';
   return `<div style="padding:18px 18px 100px">
-    ${squadLbHTML()}
+    ${teamCompareCardHTML()}
+    ${groupedLbHTML()}
     <div class="card" style="padding:20px;text-align:center"><div class="lbl">VOX STARS sit</div>
       <div class="num" style="font-size:52px;font-weight:700;color:var(--navy);line-height:1;margin-top:4px">${ordinalNum(rows.voxRank)}<span style="font-size:22px;color:#c6bfac">${ordinalSuf(rows.voxRank)}</span></div>
       <div style="font-size:12.5px;color:var(--muted2);margin-top:2px">of 12 brands · projected series</div></div>

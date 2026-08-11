@@ -6,10 +6,14 @@
    Every function takes plain per-player view-models the caller assembles from
    the existing app helpers (disp, teamAvg, srate/sprate, seasonStats):
      { no, name, g:'M'|'F', team:'A'|'B'|'C'|null,
-       avg:Number|null, delta:Number|null, strikes:Number, spares:Number }
-   `strikes`/`spares` are each player's already-fallback-adjusted per-game
-   contribution (the value teamStrikes/teamSpares sum), so this module never
-   invents strike/spare data — it only groups, ranks, and orders. */
+       avg:Number|null, proj:Number, delta:Number|null,
+       strikes:Number, spares:Number }
+   `avg` is the display average (nullable — drives rows and within-team ranking);
+   `proj` is the projected average the caller fills with the default for unlogged
+   players (drives team series/combined-average/female projections, matching the
+   My Team view). `strikes`/`spares` are each player's already-fallback-adjusted
+   per-game contribution (the value teamStrikes/teamSpares sum), so this module
+   never invents strike/spare data — it only groups, ranks, and orders. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.VoxStandings = factory();
@@ -60,19 +64,20 @@
     const groups = groupByTeam(players);
     const coverage = (opts && opts.coverage) || {};
     const out = {};
+    // projected value per player: the caller's default-filled `proj`, falling
+    // back to the display average, then 0 — so a full team always projects.
+    const proj = p => (p.proj != null ? Number(p.proj) : (p.avg == null ? 0 : Number(p.avg)));
     KEYS.forEach(k => {
       const L = groups[k];
-      const avgs = L.map(p => p.avg).filter(v => v != null).map(Number);
-      const combinedAvg = avgs.length ? Math.round(avgs.reduce((s, v) => s + v, 0) / avgs.length) : null;
-      const series = Math.round(L.reduce((s, p) => s + (p.avg == null ? 0 : Number(p.avg)), 0));
+      const series = Math.round(L.reduce((s, p) => s + proj(p), 0));
       out[k] = {
         team: k,
         count: L.length,
-        avg: combinedAvg,
+        avg: L.length ? Math.round(series / L.length) : null,
         series,
         strikes: L.reduce((s, p) => s + num(p.strikes), 0),
         spares: L.reduce((s, p) => s + num(p.spares), 0),
-        female: Math.round(L.filter(p => p.g === 'F').reduce((s, p) => s + (p.avg == null ? 0 : Number(p.avg)), 0)),
+        female: Math.round(L.filter(p => p.g === 'F').reduce((s, p) => s + proj(p), 0)),
         coverage: coverage[k] == null ? null : Number(coverage[k]),
       };
     });
