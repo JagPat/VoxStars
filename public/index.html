@@ -44,6 +44,7 @@
 <script src="roster.js"></script>
 <script src="app-core.js"></script>
 <script src="competitor-core.js"></script>
+<script src="team-standings.js"></script>
 <script>
 /* shared core: escaping, ten-pin math, durable offline outbox (see app-core.js) */
 const {
@@ -53,6 +54,11 @@ const {
   forecastWarningLabel,submissionLocked,fetchWithTimeout
 }=window.VoxCore;
 const {compareTeamToField}=window.VoxCompetitors;
+const {groupByTeam:stGroupByTeam,sortForBoard:stSortForBoard,rankWithinTeam:stRankWithinTeam,teamStandings:stTeamStandings,compareTeams:stCompareTeams}=window.VoxStandings;
+/* friendly squad labels over the app's canonical A/B/C letters (format fixes
+   Captain->A, VC1->B, VC2->C, so the squad's "Team 1" is sub-team B) */
+const TEAM_LABELS={A:'Team 2',B:'Team 1',C:'Team 3'};
+function teamLabel(k){return TEAM_LABELS[k]||('Sub-team '+k)}
 /* ============ REAL ROSTER (VOX STARS, IncrediBowl S2) ============ */
 const {ROSTER,LEADS}=window.VoxRoster;
 const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Verantes Elites":[145,144,139,126,115,100,94,64,59],"Bharat Blazers":[172,132,120,120,116,93,84],"Durlax Warriors":[150,134,127,120,118,105,102,95],"TWF Tornados":[139,129,124,124,123,120,115,102,92,75],"Koil Krushers":[138,131,124,120,118,115,115,104,75],"Eff.co Wreckers":[130,128,127,122,120,106,90],"Fima Strikers":[140,138,133,126,90,86],"CXO Superboss":[132,131,126,125,111,85,73],"All About Living":[142,127,122,113,112,110],"Dynamic Hunters":[126,126,117,115,113,110,90]};
@@ -161,6 +167,18 @@ function buildTeams(st){st=st||settings.splitStrategy||"powerhouse";const cap=se
   return best?best.t:base}
 function currentTeams(){const t={A:[],B:[],C:[],U:[]};players.forEach(p=>{(["A","B","C"].includes(p.team)?t[p.team]:t.U).push(p)});return t}
 function teamsForDisplay(){const c=currentTeams();if(c.A.length+c.B.length+c.C.length<15)return buildTeams(S.strategy);return{A:c.A,B:c.B,C:c.C}}
+/* per-player view-models for the standings module (team-standings.js): strike/spare
+   values are each player's per-game contribution with the same fallback teamStrikes/
+   teamSpares use, so team totals here match those helpers. */
+function stPlayers(){return players.map(p=>{const sr=srate(p),spr=sprate(p),d=disp(p),ss=seasonStats(p);
+  return{no:p.no,name:p.name,g:p.g,team:p.team,avg:d.avg,proj:teamAvg(p),delta:ss.delta,
+    strikes:sr!=null?sr:((p.lgStr&&p.lgM)?p.lgStr/p.lgM:0),spares:spr!=null?spr:0};});}
+/* optimizer tieBreakCoverage per team — reused only when the loaded scenario's
+   assignment matches the teams currently on screen, so the number always
+   describes the composition being shown (never a stale second measure) */
+function stCoverage(){const s=selectedOptimizerScenario&&selectedOptimizerScenario();if(!s||!s.teams||!s.assignments)return{};
+  if(!players.every(p=>p.team&&s.assignments[p.no]===p.team))return{};
+  const out={};['A','B','C'].forEach(k=>{const m=s.teams[k];if(m&&m.tieBreakCoverage!=null)out[k]=m.tieBreakCoverage});return out;}
 
 /* ============ FRAME-BY-FRAME SCORER ============
    The real ten-pin math lives in app-core.js (frameState/frameComplete/rollTxt)
@@ -354,6 +372,7 @@ function meViewHTML(){const m=disp(P(ui.me)),target=m.target,pct=m.avg?Math.min(
           <div style="flex:1;text-align:center;border-left:1px solid #ece7da"><div class="num" style="font-size:19px;font-weight:700;color:var(--navy)">${m.spares}</div><div style="font-size:12px;color:var(--muted2);margin-top:1px">spares</div></div>
         </div></div>
       ${seasonCardHTML(ss)}
+      ${teamContextCardHTML(P(ui.me))}
       <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:20px;padding:18px;margin-top:12px;color:#fff">
         <div class="lbl" style="color:var(--gold2)">Your game plan</div>
         <div style="font-size:15px;font-weight:600;margin-top:8px;line-height:1.4">${esc(gd.head)}</div>
@@ -381,10 +400,64 @@ function teamViewHTML(){const me=P(ui.me);if(!me.team){return `<div style="paddi
         <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px;text-align:center"><div class="num" style="font-size:15px;font-weight:700;color:${base<=25?'#7bd88f':'#ff9a8a'}">${base<=25?'✓':base+'Cr'}</div><div style="font-size:9px;opacity:.6">≤ 25 Cr cap</div></div>
         <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px;text-align:center"><div class="num" style="font-size:15px;font-weight:700">${rank}</div><div style="font-size:9px;opacity:.6">of 3 sub-teams</div></div></div></div>
     <div class="lbl" style="margin:18px 4px 8px">Your five</div>${rows}</div>`}
+/* stable block order by the friendly Team 1/2/3 numbering (B, A, C) */
+function teamBlockOrder(){return ['A','B','C'].slice().sort((x,y)=>(parseInt(TEAM_LABELS[x].replace(/\D/g,''),10)||9)-(parseInt(TEAM_LABELS[y].replace(/\D/g,''),10)||9));}
+/* job 3 — team-vs-team summary, ordered by the official tie-breakers */
+function teamCompareCardHTML(){const sp=stPlayers(),cov=stCoverage(),ranked=stCompareTeams(sp,{coverage:cov});
+  if(ranked.length<3)return '';
+  const myTeam=(P(ui.me)||{}).team;
+  const cell=(v,lbl,strong)=>`<div style="flex:1;text-align:center"><div class="num" style="font-size:${strong?'17':'13'}px;font-weight:${strong?'800':'700'};color:var(--navy)">${v}</div><div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">${lbl}</div></div>`;
+  const rows=ranked.map(r=>{const s=r.standing,mine=myTeam===s.team;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:12px;background:${mine?'#fdf6e3':'transparent'};border-top:1px solid var(--line)">
+      <div style="flex:0 0 auto;text-align:center;width:20px"><div class="num" style="font-size:13px;font-weight:800;color:${r.position===1?'#8a5a00':'var(--muted)'}">${r.position}</div></div>
+      <div style="flex:0 0 auto;min-width:70px"><div style="font-size:12.5px;font-weight:800;color:var(--navy)">${teamLabel(s.team)}</div><div style="font-size:9px;color:var(--muted)">Sub-team ${s.team}${mine?' · yours':''}</div></div>
+      ${cell(s.series,'series',true)}${cell(s.avg==null?'—':s.avg,'avg')}${cell(s.strikes.toFixed(1),'✕ /gm')}${cell(s.spares.toFixed(1),'/ /gm')}
+    </div>`}).join('');
+  const anyCov=ranked.some(r=>r.standing.coverage!=null);
+  const covLine=anyCov
+    ? 'Tie-break data coverage: '+ranked.map(r=>teamLabel(r.standing.team)+' '+Math.round((r.standing.coverage||0)*100)+'%').join(' · ')+'. Strike & spare projections lean on the players who record them.'
+    : 'Strikes & spares are per-game projections — only some players record them, so team totals are partly extrapolated.';
+  return `<div class="card" style="padding:16px 14px 12px;margin-bottom:14px">
+    <div style="font-size:14px;font-weight:800;color:var(--navy)">Team vs team</div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.45;margin-top:2px">Ranked by projected series, then the official tie-breakers: strikes → spares → female score.</div>
+    <div style="margin-top:8px">${rows}</div>
+    <div style="font-size:9.5px;color:#968e7b;line-height:1.45;margin-top:10px">${esc(covLine)}</div></div>`}
+/* job 4 — a player's standing within their own sub-team + how that team tracks */
+function teamContextCardHTML(me){if(!me||!['A','B','C'].includes(me.team))return '';
+  const sp=stPlayers(),rk=stRankWithinTeam(sp,me.no),ranked=stCompareTeams(sp);
+  const idx=ranked.findIndex(r=>r.team===me.team);if(idx<0||!rk)return '';
+  const std=ranked[idx],pos=std.position,posLabel=['','1st','2nd','3rd'][pos]||(pos+'th');
+  let gap;
+  if(pos===1){const nxt=ranked[1];gap=nxt?('Leading '+teamLabel(nxt.team)+' by '+(std.standing.series-nxt.standing.series)+' projected series'):'Top of the three sub-teams';}
+  else{const ahead=ranked[idx-1];gap='Behind '+teamLabel(ahead.team)+' by '+(ahead.standing.series-std.standing.series)+' projected series';}
+  const posColor=pos===1?'var(--good)':(pos===3?'var(--bad)':'#8a5a00');
+  return `<div class="card" style="padding:16px 18px;margin-top:12px">
+    <div style="font-size:12px;font-weight:700;color:var(--navy)">Your sub-team</div>
+    <div style="display:flex;align-items:center;gap:14px;margin-top:12px">
+      <div style="flex:0 0 auto;text-align:center"><div class="num" style="font-size:26px;font-weight:800;color:var(--navy);line-height:1">#${rk.rank}</div><div style="font-size:11px;color:var(--muted2);margin-top:2px">of ${rk.size} in ${teamLabel(me.team)}</div></div>
+      <div style="width:1px;align-self:stretch;background:#ece7da"></div>
+      <div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:800;color:${posColor}">${teamLabel(me.team)} is ${posLabel} of 3</div><div style="font-size:11.5px;color:var(--muted2);margin-top:4px;line-height:1.4">${esc(gap)}</div></div></div></div>`}
+/* job 2 — leaderboard grouped into per-sub-team blocks, ranked within each */
+function groupedLbHTML(){const c=currentTeams();if(c.A.length+c.B.length+c.C.length<15)return squadLbHTML();
+  const sort=S.lbSort||'imp',sp=stPlayers(),g=stGroupByTeam(sp),st=stTeamStandings(sp);
+  const toggle=`<div style="display:flex;align-items:center;gap:8px;margin:0 4px 8px"><div class="lbl">Who's rising</div><div style="display:flex;gap:6px;margin-left:auto">${['imp','avg'].map(k=>`<button onclick="setLbSort('${k}')" class="chip ${sort===k?'on':''}">${k==='imp'?'Most improved':'By average'}</button>`).join('')}</div></div>`;
+  const blocks=teamBlockOrder().map(k=>{const list=stSortForBoard(g[k],sort),s=st[k];
+    const rows=list.map((p,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-radius:11px;background:${p.no===ui.me?'#fdf6e3':'transparent'}">
+      <div class="num" style="width:16px;text-align:center;font-size:12.5px;font-weight:800;color:${i===0?'#8a5a00':'var(--muted)'};flex:0 0 auto">${i+1}</div>
+      <div class="num" style="position:relative;overflow:hidden;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;color:#fff;flex:0 0 auto;background:${avatarBg(p.g)}">${initials(p.name)}${avPhoto(p.no)}</div>
+      <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.no===ui.me?' <span style="font-size:8.5px;font-weight:800;background:var(--gold);color:var(--navy);padding:1px 5px;border-radius:5px">YOU</span>':''}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div></div>
+      <div style="text-align:right;flex:0 0 auto"><div class="num" style="font-size:16px;font-weight:700;color:var(--navy)">${p.avg==null?'—':p.avg}</div><div style="font-size:9px;font-weight:700">${p.delta!=null?deltaTag(p.delta):'<span style="color:var(--muted)">new bowler</span>'}</div></div></div>`).join('');
+    return `<div style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:14px 14px 0 0;padding:11px 14px;color:#fff">
+        <div class="num" style="width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.12);color:var(--gold2);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:0 0 auto">${k}</div>
+        <div style="flex:1"><div style="font-size:13px;font-weight:800">${teamLabel(k)}</div><div style="font-size:9.5px;opacity:.6">${esc(leadName(k))}'s Five</div></div>
+        <div style="text-align:right"><div class="num" style="font-size:19px;font-weight:800;color:var(--gold2);line-height:1">${s.series}</div><div style="font-size:8.5px;opacity:.6">series · avg ${s.avg==null?'—':s.avg}</div></div></div>
+      <div class="card" style="padding:5px 12px;border-radius:0 0 14px 14px">${rows}</div></div>`}).join('');
+  return `${toggle}${blocks}`;}
 function competeViewHTML(){const rows=ladderRows();
   const lb=strikeLeaderboard();const meRankTxt=lb.myRank?("You're <span style=\"color:#8a5a00;font-weight:700\">"+ordinal(lb.myRank)+"</span> for strikes this week 🎳"):'';
   return `<div style="padding:18px 18px 100px">
-    ${squadLbHTML()}
+    ${teamCompareCardHTML()}
+    ${groupedLbHTML()}
     <div class="card" style="padding:20px;text-align:center"><div class="lbl">VOX STARS sit</div>
       <div class="num" style="font-size:52px;font-weight:700;color:var(--navy);line-height:1;margin-top:4px">${ordinalNum(rows.voxRank)}<span style="font-size:22px;color:#c6bfac">${ordinalSuf(rows.voxRank)}</span></div>
       <div style="font-size:12.5px;color:var(--muted2);margin-top:2px">of 12 brands · projected series</div></div>
@@ -462,6 +535,24 @@ function optimizerTeamCard(scenario,team){const L=optimizerTeamPlayers(scenario,
   const chips=L.map(p=>{const f=forecastFor(p.no);return `<button onclick="showForecast(${p.no})" style="display:flex;align-items:center;gap:5px;border:0;background:var(--app);border-radius:18px;padding:5px 8px;color:var(--navy);cursor:pointer"><span style="font-size:11px;font-weight:700">${esc(shortName(p.name))}</span><span class="num" style="font-size:10px;color:var(--muted)">${f?Math.round(f.mean):'—'}</span></button>`}).join('');
   return `<div class="card" style="padding:15px;margin-top:10px"><div style="display:flex;gap:9px;align-items:center"><div class="num" style="width:32px;height:32px;border-radius:9px;background:var(--navy);color:var(--gold2);display:flex;align-items:center;justify-content:center;font-weight:800">${team}</div><div style="flex:1"><div style="font-size:13px;font-weight:800;color:var(--navy)">Sub-team ${team}</div><div style="font-size:10px;color:var(--muted)">${base} / ${cap} Cr · ${Math.round(m.confidence*100)}% confidence</div></div><div style="text-align:right"><div class="num" style="font-size:18px;font-weight:800;color:var(--navy)">${Math.round(m.stageOne.expected)}</div><div style="font-size:9px;color:var(--muted)">Stage I expected</div></div></div>
     <div style="display:flex;gap:7px;margin-top:10px"><div style="flex:1;background:var(--app);padding:8px;border-radius:9px;text-align:center"><div class="num" style="font-weight:800">${Math.round(m.stageOne.p20)}</div><div style="font-size:8.5px;color:var(--muted)">Stage I floor</div></div><div style="flex:1;background:var(--app);padding:8px;border-radius:9px;text-align:center"><div class="num" style="font-weight:800">${Math.round(m.later.p20)}</div><div style="font-size:8.5px;color:var(--muted)">1-game floor</div></div><div style="flex:1;background:var(--app);padding:8px;border-radius:9px;text-align:center"><div class="num" style="font-weight:800">${Math.round(m.tieBreakCoverage*100)}%</div><div style="font-size:8.5px;color:var(--muted)">tie data</div></div></div><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:10px">${chips}</div></div>`}
+function manualEditorHTML(){const locked=teamsAreLocked(),open=!!S.manualOpen,cap=settings.capCr||25;
+  const a=open?ensureManualAssign():manualAssignSeed();
+  const err=teamSplitError(players,a,cap,LEADS);
+  const tot={A:0,B:0,C:0},cnt={A:0,B:0,C:0},wom={A:0,B:0,C:0};
+  players.forEach(p=>{const k=a[p.no];if(tot[k]!=null){tot[k]+=p.pt||0;cnt[k]++;if(p.g==='F')wom[k]++}});
+  const head=`<button onclick="toggleManual()" aria-expanded="${open}" style="width:100%;display:flex;align-items:center;gap:8px;background:none;border:0;padding:2px 0;cursor:pointer"><span style="font-size:14px;font-weight:800;color:var(--navy)">✍️ Build teams by hand</span><span style="margin-left:auto;font-size:12px;color:var(--muted2);font-weight:700">${open?'Hide ▲':'Edit ▼'}</span></button>`;
+  if(!open)return `<div class="card" style="padding:14px;margin-top:14px">${head}<div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:4px">Set any legal split yourself — a per-player A/B/C control with live legality checks. No backup/restore round-trip.</div></div>`;
+  const chips=['A','B','C'].map(k=>{const legal=cnt[k]===5&&wom[k]===1&&tot[k]<=cap;return `<div style="flex:1;min-width:96px;background:var(--app);border-radius:11px;padding:9px"><div style="font-size:10px;font-weight:800;color:var(--navy)">${teamLabel(k)} <span style="color:var(--muted)">· ${k}</span></div><div style="font-size:10px;color:${legal?'var(--good)':'var(--bad)'};font-weight:700;margin-top:3px">${cnt[k]}/5 · ${wom[k]}W</div><div class="num" style="font-size:13px;font-weight:800;color:${tot[k]<=cap?'var(--navy)':'var(--bad)'};margin-top:2px">${tot[k]}<span style="font-size:9px;color:var(--muted)">/${cap} Cr</span></div></div>`}).join('');
+  const rows=players.map(p=>{const isLead=[LEADS.A,LEADS.B,LEADS.C].includes(p.no),cur=a[p.no];
+    const seg=(isLead||locked)?`<div style="display:flex;gap:4px">${['A','B','C'].map(k=>`<div class="num" style="width:26px;text-align:center;padding:5px 0;border-radius:8px;font-weight:800;font-size:12px;background:${cur===k?'var(--navy)':'transparent'};color:${cur===k?'var(--gold2)':'var(--muted)'}">${k}</div>`).join('')}</div>`:`<div style="display:flex;gap:4px">${['A','B','C'].map(k=>`<button onclick="setManualTeam(${p.no},'${k}')" class="chip ${cur===k?'on':''}" style="width:26px;padding:5px 0;text-align:center;font-weight:800">${k}</button>`).join('')}</div>`;
+    return `<div style="display:flex;align-items:center;gap:9px;padding:7px 2px;border-top:1px solid var(--line)"><div class="num" style="position:relative;overflow:hidden;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;color:#fff;flex:0 0 auto;background:${avatarBg(p.g)}">${initials(p.name)}${avPhoto(p.no)}</div><div style="min-width:0;flex:1"><div style="font-size:12px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${isLead?' <span style="font-size:8px;font-weight:800;background:var(--navy);color:#fff;padding:1px 5px;border-radius:5px">LEAD</span>':(p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':'')}</div><div style="font-size:9.5px;color:var(--muted)">${p.pt||0} Cr</div></div>${seg}</div>`}).join('');
+  const validLine=err?`<div style="background:#fef2f2;color:var(--bad);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">${esc(err)}</div>`:`<div style="background:#e6f4ec;color:var(--good);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">✓ Legal split — ready to save</div>`;
+  return `<div class="card" style="padding:14px;margin-top:14px">${head}
+    <div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:4px">Leads (Captain / VCs) stay fixed to their team. Move anyone else with the A/B/C buttons; totals and legality update live.</div>
+    <div style="display:flex;gap:6px;margin-top:10px">${chips}</div>
+    ${locked?'<div style="background:#e6f4ec;color:var(--good);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">Official list submitted — read-only. Use the organizer-approved unlock to edit.</div>':validLine}
+    <div style="margin-top:6px">${rows}</div>
+    ${locked?'':`<button class="prim" onclick="saveManualTeams()" ${err?'disabled':''} style="margin-top:12px;opacity:${err?'.5':'1'}">Save all 15 assignments</button><button onclick="resetManualTeams()" style="width:100%;margin-top:8px;padding:11px;border-radius:12px;border:1px solid var(--line);background:#fdfbf4;color:var(--muted2);font-weight:700;cursor:pointer">Reset to current saved teams</button>`}</div>`}
 function competitorComparisonHTML(scenario){const stage=S.competitorStage||'stageOne',field=competitorObservations.filter(x=>x.stage===stage);
   const label=stage==='stageOne'?'Stage I · 10-game total':'Later rounds · 5-game total';
   const cards=['A','B','C'].map(team=>{const stats=scenario.teams[team][stage],cmp=compareTeamToField(stats,field);
@@ -482,7 +573,7 @@ function removeCompetitor(id){if(!confirm('Remove this observed competitor score
 function forecastDrawerHTML(){const f=forecastFor(S.forecastNo),p=P(S.forecastNo);if(!f||!p)return'';const games=[...(p.games||[])].reverse().map(g=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)"><div class="num" style="font-weight:800;color:var(--navy)">${g.score}</div><div style="flex:1;font-size:10px;color:var(--muted)">${esc(g.date||'')} · ${g.optimizerIncluded===false?'excluded':'included'}</div><button onclick="setOptimizerGame(${p.no},'${idAttr(g.id)}',${g.optimizerIncluded===false?'true':'false'})" style="border:0;border-radius:8px;padding:6px 8px;font-size:10px;font-weight:700;background:${g.optimizerIncluded===false?'#e6f4ec':'#fdeeec'};color:${g.optimizerIncluded===false?'var(--good)':'var(--bad)'}">${g.optimizerIncluded===false?'Include':'Exclude'}</button></div>`).join('');
   return `<div class="card" style="padding:16px;margin-top:12px;border:2px solid var(--gold)"><div style="display:flex;align-items:center"><div style="font-weight:800;color:var(--navy)">${esc(shortName(p.name))} forecast</div><button onclick="showForecast(null)" style="margin-left:auto;border:0;background:transparent;font-size:18px">✕</button></div><div style="display:flex;gap:8px;margin-top:12px"><div style="flex:1"><div class="num" style="font-size:24px;font-weight:800">${Math.round(f.mean)}</div><div style="font-size:9px;color:var(--muted)">expected</div></div><div style="flex:1"><div class="num" style="font-size:24px;font-weight:800">${Math.round(f.p20)}–${Math.round(f.p80)}</div><div style="font-size:9px;color:var(--muted)">forecast range</div></div><div style="flex:1"><div class="num" style="font-size:24px;font-weight:800">${f.confidenceLabel}</div><div style="font-size:9px;color:var(--muted)">confidence</div></div></div><div style="font-size:11px;color:var(--muted2);margin-top:10px">${esc(forecastWarningLabel(f))}</div>${games||'<div style="font-size:11px;color:var(--muted);margin-top:10px">No practice games recorded.</div>'}</div>`}
 function optimizerViewHTML(){const vm=scenarioViewModel(S.optimizerResult,S.selectedScenario),scenario=vm.selected,locked=teamsAreLocked();
-  if(!S.optimizerResult)return `<div style="padding:16px 16px 100px"><div class="card" style="padding:24px;text-align:center"><div style="font-size:17px;font-weight:800;color:var(--navy)">${S.optimizerBusy?'Analyzing every legal split…':'Tournament optimizer'}</div><div style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px">${esc(S.optimizerError||'Compare Championship Safe, Aggressive, and Franchise Balanced options across upside and weakest-team downside.')}</div><button class="prim" style="margin-top:16px" onclick="loadOptimizer(true)" ${S.optimizerBusy?'disabled':''}>${S.optimizerBusy?'Working…':'Analyze all teams'}</button></div></div>`;
+  if(!S.optimizerResult)return `<div style="padding:16px 16px 100px"><div class="card" style="padding:24px;text-align:center"><div style="font-size:17px;font-weight:800;color:var(--navy)">${S.optimizerBusy?'Analyzing every legal split…':'Tournament optimizer'}</div><div style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px">${esc(S.optimizerError||'Compare Championship Safe, Aggressive, and Franchise Balanced options across upside and weakest-team downside.')}</div><button class="prim" style="margin-top:16px" onclick="loadOptimizer(true)" ${S.optimizerBusy?'disabled':''}>${S.optimizerBusy?'Working…':'Analyze all teams'}</button></div>${manualEditorHTML()}</div>`;
   const tabs=vm.cards.map(c=>`<button class="${scenario&&scenario.mode===c.mode?'on':''}" onclick="selectScenario('${c.mode}')">${esc(c.label)}</button>`).join('');
   const quality=(S.optimizerResult.dataQuality||[]).slice(0,8).map(x=>{const p=P(x.no);return `<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)"><div style="flex:1"><div style="font-size:11px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}</div><div style="font-size:10px;color:var(--muted)">${esc(x.message)}</div></div><button onclick="showForecast(${p.no})" class="chip">Review</button><button onclick="nudge(${p.no})" class="chip">Nudge</button></div>`}).join('');
   const stale=S.optimizerStale?'<div style="background:#fef2f2;color:var(--bad);padding:10px 12px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">Scores or settings changed. Refresh before applying.</div>':'';
@@ -493,6 +584,7 @@ function optimizerViewHTML(){const vm=scenarioViewModel(S.optimizerResult,S.sele
     <div style="display:flex;gap:8px;margin-top:12px"><button class="prim" onclick="applyOptimizerSplit()" ${locked||S.optimizerStale?'disabled':''} style="opacity:${locked||S.optimizerStale?'.5':'1'}">Apply ${esc(scenario.label)}</button></div>
     ${!locked&&players.every(p=>p.team)?`<button onclick="submitTeams()" style="width:100%;margin-top:8px;padding:13px;border-radius:12px;border:1px solid var(--bad);background:#fff;color:var(--bad);font-weight:800">Mark official list submitted</button>`:''}
     ${locked?`<button onclick="unlockTeams()" style="width:100%;margin-top:8px;padding:11px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--muted2);font-weight:700">Organizer-approved unlock</button>`:''}
+    ${manualEditorHTML()}
     ${competitorComparisonHTML(scenario)}
     ${quality?`<div class="card" style="padding:14px;margin-top:14px"><div class="lbl">Data-quality queue</div>${quality}</div>`:''}
     <div style="font-size:10.5px;color:#968e7b;text-align:center;line-height:1.5;margin-top:14px">Forecasts are advisory. No qualification probability is shown without a sourced opponent cutoff.</div></div>`}
@@ -501,19 +593,22 @@ function matchDayViewHTML(){const team=S.mdTeam||'A';const c=currentTeams();let 
   let series=0,tStr=0,tSpr=0,entered=0,fem=0;list.forEach(p=>{[1,2].forEach(g=>{const e=md[p.no+'-'+g];if(e){series+=e.score||0;tStr+=e.strikes||0;tSpr+=e.spares||0;entered++;if(p.g==='F')fem+=e.score||0}})});
   const teamChips=['A','B','C'].map(t=>`<button onclick="mdSetTeam('${t}')" class="chip ${t===team?'on':''}">Sub-team ${t}</button>`).join('');
   const col=(p,g)=>{const e=mdEntry(team,p.no,g);return `<div style="width:66px;flex:0 0 auto"><input inputmode="numeric" maxlength="3" value="${+e.score||''}" placeholder="—" onchange="setMatchScore('${team}',${p.no},${g},this.value)" class="num" style="width:100%;text-align:center;font-size:17px;font-weight:700;color:var(--navy);border:1px solid var(--line);border-radius:10px;padding:8px 4px;background:#fdfbf4"><div onclick="editCellSS('${team}',${p.no},${g})" style="text-align:center;font-size:9px;color:${(+e.strikes||+e.spares)?'#8a5a00':'#c6bfac'};margin-top:3px;cursor:pointer">${+e.score?((+e.strikes||0)+'✕ '+(+e.spares||0)+'/'):'✕ /'}</div></div>`};
-  const rows=list.map(p=>`<div style="display:flex;align-items:center;gap:9px;background:#fdfbf4;border-radius:14px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)"><div class="num" style="position:relative;overflow:hidden;width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}${avPhoto(p.no)}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">2 qualifier games</div></div>${col(p,1)}${col(p,2)}</div>`).join('');
+  const rows=list.map(p=>{const t=(+mdEntry(team,p.no,1).score||0)+(+mdEntry(team,p.no,2).score||0);
+    return `<div style="display:flex;align-items:center;gap:9px;background:#fdfbf4;border-radius:14px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)"><div class="num" style="position:relative;overflow:hidden;width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}${avPhoto(p.no)}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">2 qualifier games</div></div>${col(p,1)}${col(p,2)}<div style="width:38px;flex:0 0 auto;text-align:center"><div class="num" style="font-size:16px;font-weight:800;color:${t?'var(--navy)':'#c6bfac'}">${t||'—'}</div><div style="font-size:8px;color:var(--muted)">total</div></div></div>`}).join('');
+  const scoreHead=`<div style="display:flex;align-items:center;gap:9px;padding:0 12px 2px"><div style="flex:1"></div><div style="width:66px;flex:0 0 auto;text-align:center;font-size:9px;font-weight:800;color:#968e7b">GAME 1</div><div style="width:66px;flex:0 0 auto;text-align:center;font-size:9px;font-weight:800;color:#968e7b">GAME 2</div><div style="width:38px;flex:0 0 auto;text-align:center;font-size:9px;font-weight:800;color:#968e7b">Σ</div></div>`;
   return `<div style="padding:16px 16px 100px">
     <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:18px;padding:16px;color:#fff">
       <div style="font-size:15px;font-weight:700">Match day · Sub-team ${team}</div>
       <div style="font-size:11.5px;opacity:.72;margin-top:3px;line-height:1.4">Enter each player's 2 qualifier games. Tie-breakers: strikes → spares → female score.</div>
       <div style="display:flex;gap:6px;margin-top:12px">${teamChips}</div>
       <div style="display:flex;gap:7px;margin-top:14px">
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700;color:var(--gold2)">${series}</div><div style="font-size:8.5px;opacity:.6">series</div></div>
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tStr}</div><div style="font-size:8.5px;opacity:.6">strikes ✕</div></div>
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tSpr}</div><div style="font-size:8.5px;opacity:.6">spares /</div></div>
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${entered}<span style="font-size:11px;opacity:.6">/10</span></div><div style="font-size:8.5px;opacity:.6">games</div></div></div>
-      ${fem?`<div style="font-size:10.5px;opacity:.72;margin-top:10px">Female score (tie-breaker 3): <b style="color:var(--gold2)">${fem}</b></div>`:''}</div>
-    <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Player · game 1 · game 2</div><div style="font-size:10px;color:#968e7b;margin-left:auto">type score · tap ✕/ for strikes-spares</div></div>
+        <div style="flex:1.2;background:rgba(233,185,73,.16);border:1px solid rgba(233,185,73,.35);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:22px;font-weight:800;color:var(--gold2)">${series}</div><div style="font-size:8.5px;opacity:.75">series</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tStr}</div><div style="font-size:8px;opacity:.6">1 · ✕ strikes</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tSpr}</div><div style="font-size:8px;opacity:.6">2 · / spares</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${fem}</div><div style="font-size:8px;opacity:.6">3 · ♀ female</div></div></div>
+      <div style="font-size:10px;opacity:.72;margin-top:10px;line-height:1.4">${entered}/10 games entered · standings order: <b>series → strikes → spares → female</b></div></div>
+    <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Sub-team ${team} scorecard</div><div style="font-size:10px;color:#968e7b;margin-left:auto">type score · tap ✕/ for strikes-spares</div></div>
+    ${scoreHead}
     ${rows}
     <button onclick="shareMatchSummary('${team}')" style="width:100%;margin-top:6px;border-radius:12px;padding:12px;font-size:12.5px;font-weight:700;cursor:pointer;border:none;background:var(--gold);color:var(--navy)">Share Sub-team ${team} summary</button>
     <button onclick="clearMatchTeam('${team}')" style="width:100%;margin-top:8px;border-radius:12px;padding:10px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid #f0d0cc;background:#fdeeec;color:var(--bad)">Clear Sub-team ${team} match scores</button>
@@ -704,14 +799,25 @@ function logForThem(no){S.logTarget=no;S.sheet='log';S.scorer='quick';S.entry=cr
 function setStrategy(x){S.strategy=x;coachAction('PUT','/api/settings',{splitStrategy:x},()=>{settings.splitStrategy=x});render()}
 function applySplit(){const t=buildTeams(S.strategy);const a={};['A','B','C'].forEach(k=>t[k].forEach(p=>a[p.no]=k));
   const err=teamSplitError(players,a,settings.capCr||25,LEADS);if(err){toast("Can't apply this split",err+" Adjust the pinned players and try again.");return}
-  coachAction('POST','/api/teams',{assignments:a},()=>{players.forEach(p=>p.team=a[p.no]||null);S.applied=S.strategy;render();toast("Split applied","Sub-teams updated for the whole team")})}
+  coachAction('POST','/api/teams',{assignments:a},()=>{players.forEach(p=>p.team=a[p.no]||null);S.applied=S.strategy;S.manualAssign=null;render();toast("Split applied","Sub-teams updated for the whole team")})}
+/* ---- manual sub-team editor (job 1): set any legal split by hand, no backup/restore ---- */
+function manualAssignSeed(){const a={};players.forEach(p=>{a[p.no]=['A','B','C'].includes(p.team)?p.team:null});
+  if(players.some(p=>!a[p.no])){const s=selectedOptimizerScenario();if(s&&s.assignments)players.forEach(p=>{if(!a[p.no])a[p.no]=s.assignments[p.no]||null})}
+  return a;}
+function ensureManualAssign(){if(!S.manualAssign)S.manualAssign=manualAssignSeed();return S.manualAssign;}
+function toggleManual(){S.manualOpen=!S.manualOpen;if(S.manualOpen)S.manualAssign=manualAssignSeed();render();}
+function setManualTeam(no,k){if(teamsAreLocked())return;if([LEADS.A,LEADS.B,LEADS.C].includes(+no))return;const a=ensureManualAssign();a[+no]=k;S.manualAssign={...a};render();}
+function resetManualTeams(){S.manualAssign=manualAssignSeed();render();toast('Reset','Back to the current saved teams');}
+function saveManualTeams(){if(teamsAreLocked())return;const a=ensureManualAssign();const err=teamSplitError(players,a,settings.capCr||25,LEADS);
+  if(err){toast("Can't save this split",err);return;}
+  coachAction('POST','/api/teams',{assignments:a},r=>{players.forEach(p=>p.team=a[p.no]||null);if(r&&r.assignmentVersion){stateVersion=r.assignmentVersion;S.assignmentVersion=r.assignmentVersion;}S.optimizerStale=true;render();toast("Teams saved","All 15 assignments updated");});}
 async function loadOptimizer(force){if(S.optimizerBusy)return;if(S.optimizerResult&&!force)return;S.optimizerBusy=true;S.optimizerError=null;render();
   try{const r=await apiSend('POST','/api/optimizer/evaluate',{});S.optimizerResult=r;S.selectedScenario=r.recommended.mode;S.optimizerStale=false;S.optimizerBusy=false;setOnline(true);render()}
   catch(e){S.optimizerBusy=false;S.optimizerError=(e&&e.message)||'Analysis unavailable';if(e&&e.auth)openCoachPin();else if(!e.status)setOnline(false);render()}}
 function selectScenario(mode){S.selectedScenario=mode;S.forecastNo=null;render()}
 function showForecast(no){S.forecastNo=no==null?null:+no;render()}
 async function applyOptimizerSplit(){const s=selectedOptimizerScenario();if(!s||teamsAreLocked()||S.optimizerStale)return;
-  try{const r=await apiSend('POST','/api/teams',{assignments:s.assignments,evaluationVersion:S.optimizerResult.evaluationVersion});players.forEach(p=>p.team=s.assignments[p.no]||null);stateVersion=r.assignmentVersion;S.assignmentVersion=r.assignmentVersion;S.optimizerStale=true;cacheSave();render();toast('Scenario applied','Review all three teams, then mark the official list submitted')}
+  try{const r=await apiSend('POST','/api/teams',{assignments:s.assignments,evaluationVersion:S.optimizerResult.evaluationVersion});players.forEach(p=>p.team=s.assignments[p.no]||null);stateVersion=r.assignmentVersion;S.assignmentVersion=r.assignmentVersion;S.optimizerStale=true;S.manualAssign=null;cacheSave();render();toast('Scenario applied','Review all three teams, then mark the official list submitted')}
   catch(e){if(e&&e.status===409){toast('Analysis expired','Refreshing with the latest scores');S.optimizerResult=null;loadOptimizer(true)}else if(e&&e.status===423){try{await pull()}catch(_){}render();toast('Teams locked','The official list has already been submitted')}else toast('Not applied',(e&&e.message)||'Try again')}}
 async function submitTeams(){const version=S.assignmentVersion||stateVersion;if(!version)return toast('Refresh needed','Reload the team list before submitting');if(!confirm('Submit these three teams as the official list? Organizer rules prohibit internal swaps afterward.'))return;
   try{const r=await apiSend('POST','/api/teams/submit',{assignmentVersion:version});teamSubmission={...r.submission,locked:true};stateVersion=Math.max(stateVersion||0,(r.submission&&r.submission.submittedAt)||0);cacheSave();render();toast('Official list submitted','Assignments are now locked')}
