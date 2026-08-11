@@ -7,7 +7,7 @@
   const ROSTER = Object.freeze([
     { no:149, name:'AR. Jagrut Patel', firm:'Vitan Architects', g:'M', pt:2, lgAvg:89, lgHigh:93, lgM:2, lgStr:null, lgSpr:null, role:'C' },
     { no:171, name:'Mr. Sandeep Sisodiya', firm:'Vox India', g:'M', pt:1, lgAvg:null, lgHigh:null, lgM:0, lgStr:null, lgSpr:null, role:'VC' },
-    { no:175, name:'Mr. Siddharth Bhatt', firm:'Vox India', g:'M', pt:1, lgAvg:null, lgHigh:null, lgM:0, lgStr:null, lgSpr:null, role:'VC' },
+    { no:175, name:'Mr. Deval Vyas', firm:'Vox India', g:'M', pt:1, lgAvg:null, lgHigh:null, lgM:0, lgStr:null, lgSpr:null, role:'VC' },
     { no:99, name:'ID. Nayan Mistry', firm:'Hridgata Atelier', g:'M', pt:4, lgAvg:null, lgHigh:null, lgM:0, lgStr:null, lgSpr:null, role:'P' },
     { no:31, name:'ID. Shivangi Paradava', firm:'PDC Architects', g:'F', pt:7, lgAvg:115, lgHigh:158, lgM:3, lgStr:3, lgSpr:null, role:'P' },
     { no:22, name:'ID. Pranati Shah', firm:'PV Design Studio', g:'F', pt:10, lgAvg:121, lgHigh:152, lgM:4, lgStr:6, lgSpr:null, role:'P' },
