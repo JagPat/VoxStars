@@ -372,6 +372,7 @@ function meViewHTML(){const m=disp(P(ui.me)),target=m.target,pct=m.avg?Math.min(
           <div style="flex:1;text-align:center;border-left:1px solid #ece7da"><div class="num" style="font-size:19px;font-weight:700;color:var(--navy)">${m.spares}</div><div style="font-size:12px;color:var(--muted2);margin-top:1px">spares</div></div>
         </div></div>
       ${seasonCardHTML(ss)}
+      ${teamContextCardHTML(P(ui.me))}
       <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:20px;padding:18px;margin-top:12px;color:#fff">
         <div class="lbl" style="color:var(--gold2)">Your game plan</div>
         <div style="font-size:15px;font-weight:600;margin-top:8px;line-height:1.4">${esc(gd.head)}</div>
@@ -421,6 +422,21 @@ function teamCompareCardHTML(){const sp=stPlayers(),cov=stCoverage(),ranked=stCo
     <div style="font-size:10px;color:var(--muted);line-height:1.45;margin-top:2px">Ranked by projected series, then the official tie-breakers: strikes → spares → female score.</div>
     <div style="margin-top:8px">${rows}</div>
     <div style="font-size:9.5px;color:#968e7b;line-height:1.45;margin-top:10px">${esc(covLine)}</div></div>`}
+/* job 4 — a player's standing within their own sub-team + how that team tracks */
+function teamContextCardHTML(me){if(!me||!['A','B','C'].includes(me.team))return '';
+  const sp=stPlayers(),rk=stRankWithinTeam(sp,me.no),ranked=stCompareTeams(sp);
+  const idx=ranked.findIndex(r=>r.team===me.team);if(idx<0||!rk)return '';
+  const std=ranked[idx],pos=std.position,posLabel=['','1st','2nd','3rd'][pos]||(pos+'th');
+  let gap;
+  if(pos===1){const nxt=ranked[1];gap=nxt?('Leading '+teamLabel(nxt.team)+' by '+(std.standing.series-nxt.standing.series)+' projected series'):'Top of the three sub-teams';}
+  else{const ahead=ranked[idx-1];gap='Behind '+teamLabel(ahead.team)+' by '+(ahead.standing.series-std.standing.series)+' projected series';}
+  const posColor=pos===1?'var(--good)':(pos===3?'var(--bad)':'#8a5a00');
+  return `<div class="card" style="padding:16px 18px;margin-top:12px">
+    <div style="font-size:12px;font-weight:700;color:var(--navy)">Your sub-team</div>
+    <div style="display:flex;align-items:center;gap:14px;margin-top:12px">
+      <div style="flex:0 0 auto;text-align:center"><div class="num" style="font-size:26px;font-weight:800;color:var(--navy);line-height:1">#${rk.rank}</div><div style="font-size:11px;color:var(--muted2);margin-top:2px">of ${rk.size} in ${teamLabel(me.team)}</div></div>
+      <div style="width:1px;align-self:stretch;background:#ece7da"></div>
+      <div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:800;color:${posColor}">${teamLabel(me.team)} is ${posLabel} of 3</div><div style="font-size:11.5px;color:var(--muted2);margin-top:4px;line-height:1.4">${esc(gap)}</div></div></div></div>`}
 /* job 2 — leaderboard grouped into per-sub-team blocks, ranked within each */
 function groupedLbHTML(){const c=currentTeams();if(c.A.length+c.B.length+c.C.length<15)return squadLbHTML();
   const sort=S.lbSort||'imp',sp=stPlayers(),g=stGroupByTeam(sp),st=stTeamStandings(sp);
@@ -577,19 +593,22 @@ function matchDayViewHTML(){const team=S.mdTeam||'A';const c=currentTeams();let 
   let series=0,tStr=0,tSpr=0,entered=0,fem=0;list.forEach(p=>{[1,2].forEach(g=>{const e=md[p.no+'-'+g];if(e){series+=e.score||0;tStr+=e.strikes||0;tSpr+=e.spares||0;entered++;if(p.g==='F')fem+=e.score||0}})});
   const teamChips=['A','B','C'].map(t=>`<button onclick="mdSetTeam('${t}')" class="chip ${t===team?'on':''}">Sub-team ${t}</button>`).join('');
   const col=(p,g)=>{const e=mdEntry(team,p.no,g);return `<div style="width:66px;flex:0 0 auto"><input inputmode="numeric" maxlength="3" value="${+e.score||''}" placeholder="—" onchange="setMatchScore('${team}',${p.no},${g},this.value)" class="num" style="width:100%;text-align:center;font-size:17px;font-weight:700;color:var(--navy);border:1px solid var(--line);border-radius:10px;padding:8px 4px;background:#fdfbf4"><div onclick="editCellSS('${team}',${p.no},${g})" style="text-align:center;font-size:9px;color:${(+e.strikes||+e.spares)?'#8a5a00':'#c6bfac'};margin-top:3px;cursor:pointer">${+e.score?((+e.strikes||0)+'✕ '+(+e.spares||0)+'/'):'✕ /'}</div></div>`};
-  const rows=list.map(p=>`<div style="display:flex;align-items:center;gap:9px;background:#fdfbf4;border-radius:14px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)"><div class="num" style="position:relative;overflow:hidden;width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}${avPhoto(p.no)}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">2 qualifier games</div></div>${col(p,1)}${col(p,2)}</div>`).join('');
+  const rows=list.map(p=>{const t=(+mdEntry(team,p.no,1).score||0)+(+mdEntry(team,p.no,2).score||0);
+    return `<div style="display:flex;align-items:center;gap:9px;background:#fdfbf4;border-radius:14px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)"><div class="num" style="position:relative;overflow:hidden;width:34px;height:34px;border-radius:50%;background:${avatarBg(p.g)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto">${initials(p.name)}${avPhoto(p.no)}</div><div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">2 qualifier games</div></div>${col(p,1)}${col(p,2)}<div style="width:38px;flex:0 0 auto;text-align:center"><div class="num" style="font-size:16px;font-weight:800;color:${t?'var(--navy)':'#c6bfac'}">${t||'—'}</div><div style="font-size:8px;color:var(--muted)">total</div></div></div>`}).join('');
+  const scoreHead=`<div style="display:flex;align-items:center;gap:9px;padding:0 12px 2px"><div style="flex:1"></div><div style="width:66px;flex:0 0 auto;text-align:center;font-size:9px;font-weight:800;color:#968e7b">GAME 1</div><div style="width:66px;flex:0 0 auto;text-align:center;font-size:9px;font-weight:800;color:#968e7b">GAME 2</div><div style="width:38px;flex:0 0 auto;text-align:center;font-size:9px;font-weight:800;color:#968e7b">Σ</div></div>`;
   return `<div style="padding:16px 16px 100px">
     <div style="background:linear-gradient(135deg,var(--navy),var(--navy2));border-radius:18px;padding:16px;color:#fff">
       <div style="font-size:15px;font-weight:700">Match day · Sub-team ${team}</div>
       <div style="font-size:11.5px;opacity:.72;margin-top:3px;line-height:1.4">Enter each player's 2 qualifier games. Tie-breakers: strikes → spares → female score.</div>
       <div style="display:flex;gap:6px;margin-top:12px">${teamChips}</div>
       <div style="display:flex;gap:7px;margin-top:14px">
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700;color:var(--gold2)">${series}</div><div style="font-size:8.5px;opacity:.6">series</div></div>
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tStr}</div><div style="font-size:8.5px;opacity:.6">strikes ✕</div></div>
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tSpr}</div><div style="font-size:8.5px;opacity:.6">spares /</div></div>
-        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${entered}<span style="font-size:11px;opacity:.6">/10</span></div><div style="font-size:8.5px;opacity:.6">games</div></div></div>
-      ${fem?`<div style="font-size:10.5px;opacity:.72;margin-top:10px">Female score (tie-breaker 3): <b style="color:var(--gold2)">${fem}</b></div>`:''}</div>
-    <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Player · game 1 · game 2</div><div style="font-size:10px;color:#968e7b;margin-left:auto">type score · tap ✕/ for strikes-spares</div></div>
+        <div style="flex:1.2;background:rgba(233,185,73,.16);border:1px solid rgba(233,185,73,.35);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:22px;font-weight:800;color:var(--gold2)">${series}</div><div style="font-size:8.5px;opacity:.75">series</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tStr}</div><div style="font-size:8px;opacity:.6">1 · ✕ strikes</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${tSpr}</div><div style="font-size:8px;opacity:.6">2 · / spares</div></div>
+        <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px 6px;text-align:center"><div class="num" style="font-size:21px;font-weight:700">${fem}</div><div style="font-size:8px;opacity:.6">3 · ♀ female</div></div></div>
+      <div style="font-size:10px;opacity:.72;margin-top:10px;line-height:1.4">${entered}/10 games entered · standings order: <b>series → strikes → spares → female</b></div></div>
+    <div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px"><div class="lbl">Sub-team ${team} scorecard</div><div style="font-size:10px;color:#968e7b;margin-left:auto">type score · tap ✕/ for strikes-spares</div></div>
+    ${scoreHead}
     ${rows}
     <button onclick="shareMatchSummary('${team}')" style="width:100%;margin-top:6px;border-radius:12px;padding:12px;font-size:12.5px;font-weight:700;cursor:pointer;border:none;background:var(--gold);color:var(--navy)">Share Sub-team ${team} summary</button>
     <button onclick="clearMatchTeam('${team}')" style="width:100%;margin-top:8px;border-radius:12px;padding:10px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid #f0d0cc;background:#fdeeec;color:var(--bad)">Clear Sub-team ${team} match scores</button>
