@@ -45,6 +45,7 @@
 <script src="app-core.js"></script>
 <script src="competitor-core.js"></script>
 <script src="team-standings.js"></script>
+<script src="winning-line.js"></script>
 <script>
 /* shared core: escaping, ten-pin math, durable offline outbox (see app-core.js) */
 const {
@@ -55,6 +56,7 @@ const {
 }=window.VoxCore;
 const {compareTeamToField}=window.VoxCompetitors;
 const {groupByTeam:stGroupByTeam,sortForBoard:stSortForBoard,rankWithinTeam:stRankWithinTeam,teamStandings:stTeamStandings,compareTeams:stCompareTeams}=window.VoxStandings;
+const {fieldTotalsFromRivals:wlFieldTotals,winningLine:wlLine,equalLiftTargets:wlTargets}=window.VoxWinningLine;
 /* friendly squad labels over the app's canonical A/B/C letters (format fixes
    Captain->A, VC1->B, VC2->C, so the squad's "Team 1" is sub-team B) */
 const TEAM_LABELS={A:'Team 2',B:'Team 1',C:'Team 3'};
@@ -553,6 +555,39 @@ function manualEditorHTML(){const locked=teamsAreLocked(),open=!!S.manualOpen,ca
     ${locked?'<div style="background:#e6f4ec;color:var(--good);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">Official list submitted — read-only. Use the organizer-approved unlock to edit.</div>':validLine}
     <div style="margin-top:6px">${rows}</div>
     ${locked?'':`<button class="prim" onclick="saveManualTeams()" ${err?'disabled':''} style="margin-top:12px;opacity:${err?'.5':'1'}">Save all 15 assignments</button><button onclick="resetManualTeams()" style="width:100%;margin-top:8px;padding:11px;border-radius:12px;border:1px solid var(--line);background:#fdfbf4;color:var(--muted2);font-weight:700;cursor:pointer">Reset to current saved teams</button>`}</div>`}
+function winningLineHTML(){const c=currentTeams(),assigned=c.A.length+c.B.length+c.C.length;
+  if(assigned<15)return `<div class="card" style="padding:14px;margin-top:14px"><div style="font-size:14px;font-weight:800;color:var(--navy)">🎯 Winning line</div><div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:4px">Assign all three sub-teams first — then this shows what each team must score to top the field, and each player's target to get there.</div></div>`;
+  const team=['A','B','C'].includes(S.wlTeam)?S.wlTeam:'A';
+  const r=wlResult(team),line=wlCurrentLine(team),suggested=wlSuggestedLine(),field=wlFieldList(),leader=field[0];
+  const hasObs=(competitorObservations||[]).some(o=>o.stage==='stageOne');
+  const custom=S.wlLine&&S.wlLine[team]!=null&&S.wlLine[team]!==suggested;
+  const chips=['A','B','C'].map(k=>`<button onclick="setWlTeam('${k}')" class="chip ${k===team?'on':''}">${teamLabel(k)}</button>`).join('');
+  const gapTxt=r.gap>0?`${r.gap} below the line · about +${Math.max(1,Math.ceil(r.gap/10))}/game across the five`:(r.gap<0?`projected ${Math.abs(r.gap)} above the line`:'right on the line');
+  const gapColor=r.gap>0?'#8a5a00':(r.gap<0?'var(--good)':'var(--muted2)');
+  const srcTxt=hasObs?`Line uses the leading Stage-I scoreboard total you've entered.`:`Line = strongest rival sub-team we can estimate${leader?` (${esc(leader.name)} ≈ ${leader.total})`:''}. Add real scoreboard totals under Competitors to sharpen it${custom?' — or your own number below':''}.`;
+  const rows=r.targets.map(t=>{const ovSet=S.wlOverrides&&S.wlOverrides[team]&&S.wlOverrides[team][t.no]!=null;
+    const tag=t.onTrack?`<span style="color:var(--good);font-weight:700">✓ on track</span>`:(t.lift>0?`<span style="color:#8a5a00;font-weight:700">+${t.lift}/game</span>`:`<span style="color:var(--muted)">hold</span>`);
+    return `<div style="display:flex;align-items:center;gap:9px;padding:8px 2px;border-top:1px solid var(--line)">
+      <div class="num" style="position:relative;overflow:hidden;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;color:#fff;flex:0 0 auto;background:${avatarBg(t.g)}">${initials(t.name)}${avPhoto(t.no)}</div>
+      <div style="min-width:0;flex:1"><div style="font-size:12px;font-weight:700;color:var(--navy)">${esc(shortName(t.name))}${t.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':''}</div><div style="font-size:9.5px;color:var(--muted)">now ${t.current==null?'—':t.current} · ${tag}</div></div>
+      <input inputmode="numeric" maxlength="3" value="${t.target}" onchange="setWlOverride('${team}',${t.no},this.value)" class="num" style="width:56px;text-align:center;font-size:16px;font-weight:800;color:var(--navy);border:1.5px solid ${ovSet?'var(--gold)':'var(--line)'};border-radius:10px;padding:7px 2px;background:#fdfbf4">
+    </div>`}).join('');
+  return `<div class="card" style="padding:16px 14px;margin-top:14px">
+    <div style="font-size:14px;font-weight:800;color:var(--navy)">🎯 Winning line</div>
+    <div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:2px">What ${teamLabel(team)} needs to top the field — and each player's target to get there. Tap a target to pin it; the rest re-balance.</div>
+    <div class="seg" style="margin-top:10px;overflow-x:auto">${chips}</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px;background:var(--navy);border-radius:14px;padding:14px;color:#fff">
+      <div style="text-align:center;flex:0 0 auto"><div class="num" style="font-size:24px;font-weight:800;color:var(--gold2);line-height:1">${r.projectedTotal}</div><div style="font-size:9px;opacity:.65">projected</div></div>
+      <div style="font-size:18px;opacity:.5">→</div>
+      <div style="flex:1"><div style="font-size:9px;opacity:.65;margin-bottom:4px">line (10-game total)</div><div style="display:flex;align-items:center;gap:5px"><button onclick="adjustWlLine('${team}',-10)" style="width:30px;height:30px;border-radius:9px;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:17px;cursor:pointer">−</button><input inputmode="numeric" maxlength="4" value="${line}" onchange="setWlLineInput('${team}',this.value)" class="num" style="width:72px;text-align:center;font-size:20px;font-weight:800;color:#fff;background:rgba(255,255,255,.1);border:0;border-radius:9px;padding:5px 2px"><button onclick="adjustWlLine('${team}',10)" style="width:30px;height:30px;border-radius:9px;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:17px;cursor:pointer">＋</button></div></div>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:${gapColor};margin-top:8px">${esc(gapTxt.charAt(0).toUpperCase()+gapTxt.slice(1))}</div>
+    <div style="font-size:9.5px;color:#968e7b;line-height:1.45;margin-top:4px">${srcTxt}</div>
+    ${r.capped?`<div style="background:#fef2f2;color:var(--bad);padding:8px 10px;border-radius:9px;font-size:10.5px;font-weight:700;margin-top:8px">This line needs 300s from someone — pull it down or pin realistic targets.</div>`:''}
+    <div class="lbl" style="margin:14px 2px 2px">Each player's target · per game</div>
+    ${rows}
+    <button class="prim" onclick="applyWlTargets('${team}')" ${S.wlApplying?'disabled':''} style="margin-top:12px;opacity:${S.wlApplying?'.6':'1'}">${S.wlApplying?'Setting targets…':`Set as each ${teamLabel(team)} player's target`}</button>
+    <button onclick="resetWl('${team}')" style="width:100%;margin-top:8px;padding:11px;border-radius:12px;border:1px solid var(--line);background:#fdfbf4;color:var(--muted2);font-weight:700;cursor:pointer">Reset line &amp; targets</button></div>`}
 function competitorComparisonHTML(scenario){const stage=S.competitorStage||'stageOne',field=competitorObservations.filter(x=>x.stage===stage);
   const label=stage==='stageOne'?'Stage I · 10-game total':'Later rounds · 5-game total';
   const cards=['A','B','C'].map(team=>{const stats=scenario.teams[team][stage],cmp=compareTeamToField(stats,field);
@@ -573,7 +608,7 @@ function removeCompetitor(id){if(!confirm('Remove this observed competitor score
 function forecastDrawerHTML(){const f=forecastFor(S.forecastNo),p=P(S.forecastNo);if(!f||!p)return'';const games=[...(p.games||[])].reverse().map(g=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)"><div class="num" style="font-weight:800;color:var(--navy)">${g.score}</div><div style="flex:1;font-size:10px;color:var(--muted)">${esc(g.date||'')} · ${g.optimizerIncluded===false?'excluded':'included'}</div><button onclick="setOptimizerGame(${p.no},'${idAttr(g.id)}',${g.optimizerIncluded===false?'true':'false'})" style="border:0;border-radius:8px;padding:6px 8px;font-size:10px;font-weight:700;background:${g.optimizerIncluded===false?'#e6f4ec':'#fdeeec'};color:${g.optimizerIncluded===false?'var(--good)':'var(--bad)'}">${g.optimizerIncluded===false?'Include':'Exclude'}</button></div>`).join('');
   return `<div class="card" style="padding:16px;margin-top:12px;border:2px solid var(--gold)"><div style="display:flex;align-items:center"><div style="font-weight:800;color:var(--navy)">${esc(shortName(p.name))} forecast</div><button onclick="showForecast(null)" style="margin-left:auto;border:0;background:transparent;font-size:18px">✕</button></div><div style="display:flex;gap:8px;margin-top:12px"><div style="flex:1"><div class="num" style="font-size:24px;font-weight:800">${Math.round(f.mean)}</div><div style="font-size:9px;color:var(--muted)">expected</div></div><div style="flex:1"><div class="num" style="font-size:24px;font-weight:800">${Math.round(f.p20)}–${Math.round(f.p80)}</div><div style="font-size:9px;color:var(--muted)">forecast range</div></div><div style="flex:1"><div class="num" style="font-size:24px;font-weight:800">${f.confidenceLabel}</div><div style="font-size:9px;color:var(--muted)">confidence</div></div></div><div style="font-size:11px;color:var(--muted2);margin-top:10px">${esc(forecastWarningLabel(f))}</div>${games||'<div style="font-size:11px;color:var(--muted);margin-top:10px">No practice games recorded.</div>'}</div>`}
 function optimizerViewHTML(){const vm=scenarioViewModel(S.optimizerResult,S.selectedScenario),scenario=vm.selected,locked=teamsAreLocked();
-  if(!S.optimizerResult)return `<div style="padding:16px 16px 100px"><div class="card" style="padding:24px;text-align:center"><div style="font-size:17px;font-weight:800;color:var(--navy)">${S.optimizerBusy?'Analyzing every legal split…':'Tournament optimizer'}</div><div style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px">${esc(S.optimizerError||'Compare Championship Safe, Aggressive, and Franchise Balanced options across upside and weakest-team downside.')}</div><button class="prim" style="margin-top:16px" onclick="loadOptimizer(true)" ${S.optimizerBusy?'disabled':''}>${S.optimizerBusy?'Working…':'Analyze all teams'}</button></div>${manualEditorHTML()}</div>`;
+  if(!S.optimizerResult)return `<div style="padding:16px 16px 100px"><div class="card" style="padding:24px;text-align:center"><div style="font-size:17px;font-weight:800;color:var(--navy)">${S.optimizerBusy?'Analyzing every legal split…':'Tournament optimizer'}</div><div style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px">${esc(S.optimizerError||'Compare Championship Safe, Aggressive, and Franchise Balanced options across upside and weakest-team downside.')}</div><button class="prim" style="margin-top:16px" onclick="loadOptimizer(true)" ${S.optimizerBusy?'disabled':''}>${S.optimizerBusy?'Working…':'Analyze all teams'}</button></div>${manualEditorHTML()}${winningLineHTML()}</div>`;
   const tabs=vm.cards.map(c=>`<button class="${scenario&&scenario.mode===c.mode?'on':''}" onclick="selectScenario('${c.mode}')">${esc(c.label)}</button>`).join('');
   const quality=(S.optimizerResult.dataQuality||[]).slice(0,8).map(x=>{const p=P(x.no);return `<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)"><div style="flex:1"><div style="font-size:11px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}</div><div style="font-size:10px;color:var(--muted)">${esc(x.message)}</div></div><button onclick="showForecast(${p.no})" class="chip">Review</button><button onclick="nudge(${p.no})" class="chip">Nudge</button></div>`}).join('');
   const stale=S.optimizerStale?'<div style="background:#fef2f2;color:var(--bad);padding:10px 12px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">Scores or settings changed. Refresh before applying.</div>':'';
@@ -585,6 +620,7 @@ function optimizerViewHTML(){const vm=scenarioViewModel(S.optimizerResult,S.sele
     ${!locked&&players.every(p=>p.team)?`<button onclick="submitTeams()" style="width:100%;margin-top:8px;padding:13px;border-radius:12px;border:1px solid var(--bad);background:#fff;color:var(--bad);font-weight:800">Mark official list submitted</button>`:''}
     ${locked?`<button onclick="unlockTeams()" style="width:100%;margin-top:8px;padding:11px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--muted2);font-weight:700">Organizer-approved unlock</button>`:''}
     ${manualEditorHTML()}
+    ${winningLineHTML()}
     ${competitorComparisonHTML(scenario)}
     ${quality?`<div class="card" style="padding:14px;margin-top:14px"><div class="lbl">Data-quality queue</div>${quality}</div>`:''}
     <div style="font-size:10.5px;color:#968e7b;text-align:center;line-height:1.5;margin-top:14px">Forecasts are advisory. No qualification probability is shown without a sourced opponent cutoff.</div></div>`}
@@ -811,6 +847,28 @@ function resetManualTeams(){S.manualAssign=manualAssignSeed();render();toast('Re
 function saveManualTeams(){if(teamsAreLocked())return;const a=ensureManualAssign();const err=teamSplitError(players,a,settings.capCr||25,LEADS);
   if(err){toast("Can't save this split",err);return;}
   coachAction('POST','/api/teams',{assignments:a},r=>{players.forEach(p=>p.team=a[p.no]||null);if(r&&r.assignmentVersion){stateVersion=r.assignmentVersion;S.assignmentVersion=r.assignmentVersion;}S.optimizerStale=true;render();toast("Teams saved","All 15 assignments updated");});}
+/* ---- winning line (target-setting): team goal -> each player's target ---- */
+function wlTeamPlayers(team){return players.filter(p=>p.team===team).map(p=>({no:p.no,name:p.name,g:p.g,avg:disp(p).avg,proj:teamAvg(p)}));}
+function wlFieldList(){const rivals=wlFieldTotals(RIVAL_AVGS);
+  const obs=(competitorObservations||[]).filter(o=>o.stage==='stageOne'&&Number.isFinite(+o.score)).map(o=>({name:(o.franchise||'Observed')+(o.team?(' '+o.team):''),total:+o.score,observed:true}));
+  return [...obs,...rivals];}
+function wlSuggestedLine(){return wlLine(wlFieldList());}
+function wlCurrentLine(team){const s=S.wlLine&&S.wlLine[team];return s!=null?s:wlSuggestedLine();}
+function wlResult(team){return wlTargets(wlTeamPlayers(team),wlCurrentLine(team),(S.wlOverrides&&S.wlOverrides[team])||{});}
+function setWlTeam(t){S.wlTeam=t;render();}
+function adjustWlLine(team,delta){const cur=wlCurrentLine(team)||0;S.wlLine=Object.assign({},S.wlLine,{[team]:Math.max(0,Math.round(cur+delta))});render();}
+function setWlLineInput(team,val){let n=parseInt(String(val).replace(/[^\d]/g,''),10);if(isNaN(n))n=wlSuggestedLine()||0;S.wlLine=Object.assign({},S.wlLine,{[team]:Math.max(0,n)});render();}
+function setWlOverride(team,no,val){const ov=Object.assign({},(S.wlOverrides&&S.wlOverrides[team])||{});const s=String(val).trim();
+  if(s===''){delete ov[no];}else{let n=parseInt(s.replace(/[^\d]/g,''),10);if(!isNaN(n))ov[no]=Math.max(0,Math.min(300,n));}
+  S.wlOverrides=Object.assign({},S.wlOverrides,{[team]:ov});render();}
+function resetWl(team){const wl=Object.assign({},S.wlLine);delete wl[team];const ov=Object.assign({},S.wlOverrides);ov[team]={};S.wlLine=wl;S.wlOverrides=ov;render();}
+async function applyWlTargets(team){if(S.wlApplying)return;const list=wlResult(team).targets;S.wlApplying=true;render();
+  let ok=0,lastErr=null;
+  for(const t of list){try{await apiSend('PUT','/api/players/'+t.no,{target:t.target});const p=P(t.no);if(p)p.target=t.target;ok++;}catch(e){lastErr=e;}}
+  S.wlApplying=false;setOnline(true);cacheSave();render();
+  if(ok===list.length)toast('Targets set',teamLabel(team)+' — everyone now chases their number');
+  else if(lastErr&&lastErr.auth){openCoachPin();toast('Coach access needed','Unlock the cockpit, then set targets')}
+  else toast('Partly set',ok+'/'+list.length+' players updated — try again');}
 async function loadOptimizer(force){if(S.optimizerBusy)return;if(S.optimizerResult&&!force)return;S.optimizerBusy=true;S.optimizerError=null;render();
   try{const r=await apiSend('POST','/api/optimizer/evaluate',{});S.optimizerResult=r;S.selectedScenario=r.recommended.mode;S.optimizerStale=false;S.optimizerBusy=false;setOnline(true);render()}
   catch(e){S.optimizerBusy=false;S.optimizerError=(e&&e.message)||'Analysis unavailable';if(e&&e.auth)openCoachPin();else if(!e.status)setOnline(false);render()}}
