@@ -57,10 +57,10 @@ const {
 const {compareTeamToField}=window.VoxCompetitors;
 const {groupByTeam:stGroupByTeam,sortForBoard:stSortForBoard,rankWithinTeam:stRankWithinTeam,teamStandings:stTeamStandings,compareTeams:stCompareTeams}=window.VoxStandings;
 const {fieldTotalsFromRivals:wlFieldTotals,winningLine:wlLine,equalLiftTargets:wlTargets}=window.VoxWinningLine;
-/* friendly squad labels over the app's canonical A/B/C letters (format fixes
-   Captain->A, VC1->B, VC2->C, so the squad's "Team 1" is sub-team B) */
-const TEAM_LABELS={A:'Team 2',B:'Team 1',C:'Team 3'};
-function teamLabel(k){return TEAM_LABELS[k]||('Sub-team '+k)}
+/* sub-team labels match the official IncrediBowl letters (A / B / C) */
+function teamLabel(k){return 'Sub-team '+k}
+/* official IncrediBowl split — A=Sandeep(VC), B=Jagrut(C), C=Deval(VC) */
+const OFFICIAL_SPLIT={A:[171,38,41,49,31],B:[149,43,22,137,114],C:[175,82,8,128,99]};
 /* ============ REAL ROSTER (VOX STARS, IncrediBowl S2) ============ */
 const {ROSTER,LEADS}=window.VoxRoster;
 const RIVAL_AVGS={"ICA Invincibles":[150,147,145,127,125,124,112,106,104],"Verantes Elites":[145,144,139,126,115,100,94,64,59],"Bharat Blazers":[172,132,120,120,116,93,84],"Durlax Warriors":[150,134,127,120,118,105,102,95],"TWF Tornados":[139,129,124,124,123,120,115,102,92,75],"Koil Krushers":[138,131,124,120,118,115,115,104,75],"Eff.co Wreckers":[130,128,127,122,120,106,90],"Fima Strikers":[140,138,133,126,90,86],"CXO Superboss":[132,131,126,125,111,85,73],"All About Living":[142,127,122,113,112,110],"Dynamic Hunters":[126,126,117,115,113,110,90]};
@@ -403,7 +403,7 @@ function teamViewHTML(){const me=P(ui.me);if(!me.team){return `<div style="paddi
         <div style="flex:1;background:rgba(255,255,255,.1);border-radius:10px;padding:9px;text-align:center"><div class="num" style="font-size:15px;font-weight:700">${rank}</div><div style="font-size:9px;opacity:.6">of 3 sub-teams</div></div></div></div>
     <div class="lbl" style="margin:18px 4px 8px">Your five</div>${rows}</div>`}
 /* stable block order by the friendly Team 1/2/3 numbering (B, A, C) */
-function teamBlockOrder(){return ['A','B','C'].slice().sort((x,y)=>(parseInt(TEAM_LABELS[x].replace(/\D/g,''),10)||9)-(parseInt(TEAM_LABELS[y].replace(/\D/g,''),10)||9));}
+function teamBlockOrder(){return ['A','B','C'];}
 /* job 3 — team-vs-team summary, ordered by the official tie-breakers */
 function teamCompareCardHTML(){const sp=stPlayers(),cov=stCoverage(),ranked=stCompareTeams(sp,{coverage:cov});
   if(ranked.length<3)return '';
@@ -412,7 +412,7 @@ function teamCompareCardHTML(){const sp=stPlayers(),cov=stCoverage(),ranked=stCo
   const rows=ranked.map(r=>{const s=r.standing,mine=myTeam===s.team;
     return `<div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:12px;background:${mine?'#fdf6e3':'transparent'};border-top:1px solid var(--line)">
       <div style="flex:0 0 auto;text-align:center;width:20px"><div class="num" style="font-size:13px;font-weight:800;color:${r.position===1?'#8a5a00':'var(--muted)'}">${r.position}</div></div>
-      <div style="flex:0 0 auto;min-width:70px"><div style="font-size:12.5px;font-weight:800;color:var(--navy)">${teamLabel(s.team)}</div><div style="font-size:9px;color:var(--muted)">Sub-team ${s.team}${mine?' · yours':''}</div></div>
+      <div style="flex:0 0 auto;min-width:70px"><div style="font-size:12.5px;font-weight:800;color:var(--navy)">${teamLabel(s.team)}</div><div style="font-size:9px;color:var(--muted)">${mine?'yours':'&nbsp;'}</div></div>
       ${cell(s.series,'series',true)}${cell(s.avg==null?'—':s.avg,'avg')}${cell(s.strikes.toFixed(1),'✕ /gm')}${cell(s.spares.toFixed(1),'/ /gm')}
     </div>`}).join('');
   const anyCov=ranked.some(r=>r.standing.coverage!=null);
@@ -544,13 +544,14 @@ function manualEditorHTML(){const locked=teamsAreLocked(),open=!!S.manualOpen,ca
   players.forEach(p=>{const k=a[p.no];if(tot[k]!=null){tot[k]+=p.pt||0;cnt[k]++;if(p.g==='F')wom[k]++}});
   const head=`<button onclick="toggleManual()" aria-expanded="${open}" style="width:100%;display:flex;align-items:center;gap:8px;background:none;border:0;padding:2px 0;cursor:pointer"><span style="font-size:14px;font-weight:800;color:var(--navy)">✍️ Build teams by hand</span><span style="margin-left:auto;font-size:12px;color:var(--muted2);font-weight:700">${open?'Hide ▲':'Edit ▼'}</span></button>`;
   if(!open)return `<div class="card" style="padding:14px;margin-top:14px">${head}<div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:4px">Set any legal split yourself — a per-player A/B/C control with live legality checks. No backup/restore round-trip.</div></div>`;
-  const chips=['A','B','C'].map(k=>{const legal=cnt[k]===5&&wom[k]===1&&tot[k]<=cap;return `<div style="flex:1;min-width:96px;background:var(--app);border-radius:11px;padding:9px"><div style="font-size:10px;font-weight:800;color:var(--navy)">${teamLabel(k)} <span style="color:var(--muted)">· ${k}</span></div><div style="font-size:10px;color:${legal?'var(--good)':'var(--bad)'};font-weight:700;margin-top:3px">${cnt[k]}/5 · ${wom[k]}W</div><div class="num" style="font-size:13px;font-weight:800;color:${tot[k]<=cap?'var(--navy)':'var(--bad)'};margin-top:2px">${tot[k]}<span style="font-size:9px;color:var(--muted)">/${cap} Cr</span></div></div>`}).join('');
+  const chips=['A','B','C'].map(k=>{const legal=cnt[k]===5&&wom[k]===1&&tot[k]<=cap;return `<div style="flex:1;min-width:96px;background:var(--app);border-radius:11px;padding:9px"><div style="font-size:10px;font-weight:800;color:var(--navy)">${teamLabel(k)}</div><div style="font-size:10px;color:${legal?'var(--good)':'var(--bad)'};font-weight:700;margin-top:3px">${cnt[k]}/5 · ${wom[k]}W</div><div class="num" style="font-size:13px;font-weight:800;color:${tot[k]<=cap?'var(--navy)':'var(--bad)'};margin-top:2px">${tot[k]}<span style="font-size:9px;color:var(--muted)">/${cap} Cr</span></div></div>`}).join('');
   const rows=players.map(p=>{const isLead=[LEADS.A,LEADS.B,LEADS.C].includes(p.no),cur=a[p.no];
     const seg=(isLead||locked)?`<div style="display:flex;gap:4px">${['A','B','C'].map(k=>`<div class="num" style="width:26px;text-align:center;padding:5px 0;border-radius:8px;font-weight:800;font-size:12px;background:${cur===k?'var(--navy)':'transparent'};color:${cur===k?'var(--gold2)':'var(--muted)'}">${k}</div>`).join('')}</div>`:`<div style="display:flex;gap:4px">${['A','B','C'].map(k=>`<button onclick="setManualTeam(${p.no},'${k}')" class="chip ${cur===k?'on':''}" style="width:26px;padding:5px 0;text-align:center;font-weight:800">${k}</button>`).join('')}</div>`;
     return `<div style="display:flex;align-items:center;gap:9px;padding:7px 2px;border-top:1px solid var(--line)"><div class="num" style="position:relative;overflow:hidden;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;color:#fff;flex:0 0 auto;background:${avatarBg(p.g)}">${initials(p.name)}${avPhoto(p.no)}</div><div style="min-width:0;flex:1"><div style="font-size:12px;font-weight:700;color:var(--navy)">${esc(shortName(p.name))}${isLead?' <span style="font-size:8px;font-weight:800;background:var(--navy);color:#fff;padding:1px 5px;border-radius:5px">LEAD</span>':(p.g==='F'?' <span style="font-size:8px;font-weight:800;background:#f4ecfa;color:#7d3c98;padding:1px 5px;border-radius:5px">♀</span>':'')}</div><div style="font-size:9.5px;color:var(--muted)">${p.pt||0} Cr</div></div>${seg}</div>`}).join('');
   const validLine=err?`<div style="background:#fef2f2;color:var(--bad);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">${esc(err)}</div>`:`<div style="background:#e6f4ec;color:var(--good);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">✓ Legal split — ready to save</div>`;
   return `<div class="card" style="padding:14px;margin-top:14px">${head}
     <div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:4px">Leads (Captain / VCs) stay fixed to their team. Move anyone else with the A/B/C buttons; totals and legality update live.</div>
+    ${locked?'':`<button onclick="applyOfficialSplit()" style="width:100%;margin-top:10px;padding:12px;border-radius:12px;border:0;background:var(--navy);color:#fff;font-weight:800;cursor:pointer">⚡ Match the official IncrediBowl split</button>`}
     <div style="display:flex;gap:6px;margin-top:10px">${chips}</div>
     ${locked?'<div style="background:#e6f4ec;color:var(--good);padding:9px 11px;border-radius:10px;font-size:11px;font-weight:700;margin-top:10px">Official list submitted — read-only. Use the organizer-approved unlock to edit.</div>':validLine}
     <div style="margin-top:6px">${rows}</div>
@@ -882,7 +883,15 @@ function applySplit(){const t=buildTeams(S.strategy);const a={};['A','B','C'].fo
 /* ---- manual sub-team editor (job 1): set any legal split by hand, no backup/restore ---- */
 function manualAssignSeed(){const a={};players.forEach(p=>{a[p.no]=['A','B','C'].includes(p.team)?p.team:null});
   if(players.some(p=>!a[p.no])){const s=selectedOptimizerScenario();if(s&&s.assignments)players.forEach(p=>{if(!a[p.no])a[p.no]=s.assignments[p.no]||null})}
+  a[LEADS.A]='A';a[LEADS.B]='B';a[LEADS.C]='C'; /* leads always seed on their fixed letter */
   return a;}
+/* one-tap: set all 15 assignments to the official IncrediBowl split */
+function applyOfficialSplit(){if(teamsAreLocked()){toast('Teams locked','Use the organizer-approved unlock first');return;}
+  const a={};['A','B','C'].forEach(k=>OFFICIAL_SPLIT[k].forEach(no=>a[no]=k));
+  const err=teamSplitError(players,a,settings.capCr||25,LEADS);
+  if(err){toast("Can't apply",err);return;}
+  S.manualAssign={...a};
+  coachAction('POST','/api/teams',{assignments:a},r=>{players.forEach(p=>p.team=a[p.no]||null);if(r&&r.assignmentVersion){stateVersion=r.assignmentVersion;S.assignmentVersion=r.assignmentVersion;}S.optimizerStale=true;render();toast("Synced to IncrediBowl","All 15 assignments now match the official split");});}
 function ensureManualAssign(){if(!S.manualAssign)S.manualAssign=manualAssignSeed();return S.manualAssign;}
 function toggleManual(){S.manualOpen=!S.manualOpen;if(S.manualOpen)S.manualAssign=manualAssignSeed();render();}
 function setManualTeam(no,k){if(teamsAreLocked())return;if([LEADS.A,LEADS.B,LEADS.C].includes(+no))return;const a=ensureManualAssign();a[+no]=k;S.manualAssign={...a};render();}

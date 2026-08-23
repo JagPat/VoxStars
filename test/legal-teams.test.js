@@ -18,9 +18,9 @@ test('every generated partition obeys official constraints', () => {
 
 test('impossible leadership pins return a specific conflict', () => {
   const r = generateLegalPartitions({ roster: ROSTER, capCr: 25, leads: LEADS,
-    pins: { 149: 'B' }, availability: {} });
+    pins: { 149: 'A' }, availability: {} });
   assert.deepEqual(r.partitions, []);
-  assert.match(r.conflict, /Captain 149.*A/);
+  assert.match(r.conflict, /Captain 149.*B/);
 });
 
 test('unavailable roster member prevents a complete submitted split', () => {
