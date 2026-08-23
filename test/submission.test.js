@@ -24,14 +24,14 @@ test('submitted assignments reject every team mutation until audited unlock', as
     const assignmentVersion = await applyLegalSplit(req, coachSession);
     const submitted = await req('POST', '/api/teams/submit', { body: { assignmentVersion }, coachSession });
     assert.equal(submitted.status, 200);
-    assert.equal((await req('POST', '/api/teams', { body: { assignments: { 149: 'A' } }, coachSession })).status, 423);
+    assert.equal((await req('POST', '/api/teams', { body: { assignments: { 149: 'B' } }, coachSession })).status, 423);
     assert.equal((await req('PUT', '/api/players/99', { body: { team: 'B' }, coachSession })).status, 423);
     const unlocked = await req('POST', '/api/teams/unlock', {
       body: { reason: 'Organizer approved correction' }, coachSession
     });
     assert.equal(unlocked.status, 200);
     assert.equal(unlocked.body.audit.at(-1).reason, 'Organizer approved correction');
-    assert.equal((await req('POST', '/api/teams', { body: { assignments: { 149: 'A' } }, coachSession })).status, 200);
+    assert.equal((await req('POST', '/api/teams', { body: { assignments: { 149: 'B' } }, coachSession })).status, 200);
   });
 });
 

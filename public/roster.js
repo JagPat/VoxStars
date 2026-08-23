@@ -21,6 +21,7 @@
     { no:43, name:'AR. Arpan Patel', firm:'Briqmort', g:'M', pt:2, lgAvg:125, lgHigh:142, lgM:4, lgStr:6, lgSpr:null, role:'P' },
     { no:82, name:'AR. Karnav Patel', firm:'Satatya Architects', g:'M', pt:2, lgAvg:null, lgHigh:null, lgM:0, lgStr:null, lgSpr:null, role:'P' },
   ].map(p => Object.freeze(p)));
-  const LEADS = Object.freeze({ A: 149, B: 171, C: 175 });
+  // Official IncrediBowl sub-team letters: A = Sandeep (VC), B = Jagrut (Captain), C = Deval (VC).
+  const LEADS = Object.freeze({ A: 171, B: 149, C: 175 });
   return { ROSTER, LEADS };
 });

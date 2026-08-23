@@ -63,7 +63,7 @@ test('optimizer evaluation is coach-only, deterministic, and strips private stat
 test('optimizer rejects impossible constraints and accepts sourced benchmarks', async () => {
   await withCoach(async ({ req, coachSession }) => {
     const impossible = await req('POST', '/api/optimizer/evaluate', {
-      body: { pins: { 149: 'B' } }, coachSession
+      body: { pins: { 149: 'A' } }, coachSession
     });
     assert.equal(impossible.status, 422);
     assert.match(impossible.body.error, /Captain 149/);
